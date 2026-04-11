@@ -1185,7 +1185,10 @@ function draw() {
     CX.fillStyle='#ff0'; CX.font='bold 20px monospace';
     CX.fillText('CHOOSE ONE', W/2, H/2-90);
 
-    var cardW=180, cardH=90, gap=24;
+    var pad=16;
+    var gap=Math.min(18, Math.max(10, (W-2*pad)*0.08));
+    var cardW=Math.min(180, (W - pad*2 - gap) / 2);
+    var cardH=90;
     var leftX=W/2-cardW-gap/2, rightX=W/2+gap/2;
     var y=H/2-40;
     var rects=[
