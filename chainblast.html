@@ -78,6 +78,13 @@ function getTouchPos(ev, id) {
   return null;
 }
 
+function aimAngleFromX(x) {
+  var BX = LX, BY = LY - 28;
+  var r = 70;
+  var t = clamp((x - (BX - r)) / (2*r), 0, 1);
+  return Math.PI * (1 - t); // left=PI, right=0
+}
+
 function resizeCanvasToFit() {
   var hudH = document.getElementById('hud').getBoundingClientRect().height;
   var statsH = document.getElementById('stats').getBoundingClientRect().height;
@@ -102,11 +109,13 @@ var FLOOR_ROW = MAX_ROWS - 1;
 var LX        = W / 2;
 var LY        = H - 38;                          // launcher center Y
 var DROP_SEC  = 0.42;
-var MAX_WAVE  = 10;
+var MAX_WAVE  = 20;
 var BR        = 6;                               // bullet radius
 var AIM_STEPS   = 10;                            // エイムガイドラインのステップ数
 var MAX_BOUNCES  = 3;                            // 弾の最大反射回数
 var EXPL_R_MULT  = 2.15;                         // 誘爆範囲倍率（敵半径 × この値）
+var ENEMY_MARGIN = 28;
+var ENEMY_SPACING = 44;
 
 // 敵タイプ定義
 var ETYPES = {
@@ -125,7 +134,7 @@ var enemies, items, sparks, floatTexts, bul;
 var score, bestScore = 0, wave, chainCnt, shakeT;
 var scoreMul;
 var dropT, dropList;
-var mouse = { x: W/2, y: LY-60, dn: false };
+var mouse = { x: W/2, y: LY-60, dn: false, sx: W/2, sy: LY-60, hasStart:false };
 // プレイヤーキャラアニメ
 var playerAnim = { shotT: 0, shooting: false };
 var playerImg = new Image();
@@ -138,6 +147,7 @@ var prevPhase = null;
 //  HELPERS
 // ================================================================
 function rnd(a,b) { return a + Math.random()*(b-a); }
+function clamp(v,a,b) { return Math.max(a, Math.min(b, v)); }
 function dst(ax,ay,bx,by) { return Math.hypot(ax-bx,ay-by); }
 function setMsg(s) { domMsg.textContent = s; }
 function updateHUD() {
@@ -187,7 +197,13 @@ function init() {
 // ================================================================
 //  WAVE LOGIC
 // ================================================================
-function enemyCount(w) { return Math.min(2+w, 8); }
+function maxSpawnSlots() {
+  return Math.max(2, Math.floor((W - ENEMY_MARGIN*2) / ENEMY_SPACING) + 1);
+}
+function enemyCount(w) {
+  var maxEnemies = Math.max(1, maxSpawnSlots() - 1); // leave 1 slot for item
+  return Math.min(2+w, maxEnemies);
+}
 
 function pickType(w) {
   // waveが進むほど大型が増える
@@ -198,13 +214,13 @@ function pickType(w) {
 }
 
 function randomXPositions(n) {
-  var margin = 28, xs = [], tries = 0;
+  var margin = ENEMY_MARGIN, xs = [], tries = 0;
   while (xs.length < n && tries < 3000) {
     tries++;
     var x = rnd(margin, W-margin);
     var ok = true;
     for (var j=0; j<xs.length; j++) {
-      if (Math.abs(xs[j]-x) < 44) { ok=false; break; }
+      if (Math.abs(xs[j]-x) < ENEMY_SPACING) { ok=false; break; }
     }
     if (ok) xs.push(x);
   }
@@ -240,6 +256,7 @@ function nextWave() {
 
   // 新しい敵を上から（+1でアイテム分のX座標を確保）
   var xs = randomXPositions(n + 1);
+  if (xs.length < n + 1) n = Math.max(0, xs.length - 1);
   for (var i=0; i<n; i++) {
     var tp  = pickType(wave);
     var en  = makeEnemy(xs[i], 0, tp);
@@ -249,10 +266,12 @@ function nextWave() {
     enemies.push(en);
   }
   // アイテムを1つ追加
-  var it = makeItem(xs[n], 0);
-  it.y = rowY(-1);
-  dl.push({en:it, row1:0, y0:it.y, y1:rowY(0)});
-  items.push(it);
+  if (xs.length > 0) {
+    var it = makeItem(xs[n] || xs[xs.length-1], 0);
+    it.y = rowY(-1);
+    dl.push({en:it, row1:0, y0:it.y, y1:rowY(0)});
+    items.push(it);
+  }
 
   dropList=dl; dropT=0; phase='drop';
   dropList._cb=null;
@@ -304,7 +323,10 @@ CV.addEventListener('mousedown', function(ev) {
     handleSelectClick(mouse.x, mouse.y);
     return;
   }
-  if (phase==='aim') mouse.dn=true;
+  if (phase==='aim') {
+    mouse.dn=true;
+    mouse.sx=mouse.x; mouse.sy=mouse.y; mouse.hasStart=true;
+  }
   if (phase==='over'||phase==='clear') init();
 });
 CV.addEventListener('mousemove', function(ev) {
@@ -316,16 +338,17 @@ window.addEventListener('mouseup', function(ev) {
   if (usePointer) return;
   if (!mouse.dn) return;
   mouse.dn=false;
+  if (!mouse.hasStart) return;
   if (phase!=='aim') return;
   var p=getPos(ev);
   var mx=p.x, my=p.y;
   var BX = LX, BY = LY - 28;
-  var dx=mx-BX, dy=my-BY, d=Math.hypot(dx,dy);
-  if (d<8) return;
-  var spd=Math.min(d/65,1)*14+4;
-  bul={x:BX, y:BY, vx:(dx/d)*spd, vy:(dy/d)*spd, r:BR, wallHits:0};
+  var ang = aimAngleFromX(mx);
+  var spd = 12;
+  bul={x:BX, y:BY, vx:Math.cos(ang)*spd, vy:-Math.sin(ang)*spd, r:BR, wallHits:0};
   phase='bullet'; setMsg('');
   playerAnim.shooting=true; playerAnim.shotT=0;
+  mouse.hasStart=false;
 });
 
 // touch support
@@ -340,7 +363,10 @@ CV.addEventListener('touchstart', function(ev) {
     handleSelectClick(mouse.x, mouse.y);
     return;
   }
-  if (phase==='aim') mouse.dn=true;
+  if (phase==='aim') {
+    mouse.dn=true;
+    mouse.sx=mouse.x; mouse.sy=mouse.y; mouse.hasStart=true;
+  }
   if (phase==='over'||phase==='clear') init();
 }, { passive:false });
 CV.addEventListener('touchmove', function(ev) {
@@ -356,18 +382,19 @@ window.addEventListener('touchend', function(ev) {
   if (!mouse.dn) return;
   ev.preventDefault();
   mouse.dn=false;
+  if (!mouse.hasStart) return;
   var id = activeTouchId;
   activeTouchId = null;
   if (phase!=='aim') return;
   var p=getTouchPos(ev, id) || getPos(ev);
   var mx=p.x, my=p.y;
   var BX = LX, BY = LY - 28;
-  var dx=mx-BX, dy=my-BY, d=Math.hypot(dx,dy);
-  if (d<8) return;
-  var spd=Math.min(d/65,1)*14+4;
-  bul={x:BX, y:BY, vx:(dx/d)*spd, vy:(dy/d)*spd, r:BR, wallHits:0};
+  var ang = aimAngleFromX(mx);
+  var spd = 12;
+  bul={x:BX, y:BY, vx:Math.cos(ang)*spd, vy:-Math.sin(ang)*spd, r:BR, wallHits:0};
   phase='bullet'; setMsg('');
   playerAnim.shooting=true; playerAnim.shotT=0;
+  mouse.hasStart=false;
 }, { passive:false });
 window.addEventListener('touchcancel', function(ev) {
   if (usePointer) return;
@@ -386,7 +413,10 @@ if (usePointer) {
       handleSelectClick(mouse.x, mouse.y);
       return;
     }
-    if (phase==='aim') mouse.dn=true;
+    if (phase==='aim') {
+      mouse.dn=true;
+      mouse.sx=mouse.x; mouse.sy=mouse.y; mouse.hasStart=true;
+    }
     if (phase==='over'||phase==='clear') init();
   });
   CV.addEventListener('pointermove', function(ev) {
@@ -401,16 +431,17 @@ if (usePointer) {
     if (!mouse.dn) return;
     ev.preventDefault();
     mouse.dn=false;
+    if (!mouse.hasStart) return;
     if (phase!=='aim') return;
     var p=getPos(ev);
     var mx=p.x, my=p.y;
     var BX = LX, BY = LY - 28;
-    var dx=mx-BX, dy=my-BY, d=Math.hypot(dx,dy);
-    if (d<8) return;
-    var spd=Math.min(d/65,1)*14+4;
-    bul={x:BX, y:BY, vx:(dx/d)*spd, vy:(dy/d)*spd, r:BR, wallHits:0};
+    var ang = aimAngleFromX(mx);
+    var spd = 12;
+    bul={x:BX, y:BY, vx:Math.cos(ang)*spd, vy:-Math.sin(ang)*spd, r:BR, wallHits:0};
     phase='bullet'; setMsg('');
     playerAnim.shooting=true; playerAnim.shotT=0;
+    mouse.hasStart=false;
   });
   window.addEventListener('pointercancel', function(ev) {
     activePointerId = null;
@@ -1032,30 +1063,39 @@ function draw() {
 
   // エイムライン
   if (phase==='aim' && mouse.dn) {
-    var BX = LX, BY = LY - 28; // 弾の発射起点（bulletと同じ）
-    var adx=mouse.x-BX, ady=mouse.y-BY, ad=Math.hypot(adx,ady);
-    if (ad>8) {
-      var pw=Math.min(ad/65,1), spd=pw*14+4, anx=adx/ad, any=ady/ad;
-      CX.save();
-      CX.setLineDash([5,8]);
-      CX.strokeStyle='rgba(150,220,255,'+(0.2+pw*0.5)+')';
-      CX.lineWidth=1.5; CX.beginPath();
-      var sx=BX, sy=BY, svx=anx*spd, svy=any*spd;
-      CX.moveTo(sx,sy);
-      for (var k=0;k<AIM_STEPS;k++) {
-        sx+=svx;sy+=svy;
-        if(sx<BR){sx=BR;svx=Math.abs(svx);}
-        if(sx>W-BR){sx=W-BR;svx=-Math.abs(svx);}
-        if(sy<BR){sy=BR;svy=Math.abs(svy);}
-        if(sy>H-BR){sy=H-BR;svy=-Math.abs(svy);}
-        CX.lineTo(sx,sy);
-      }
-      CX.stroke(); CX.restore();
-      // パワーバー
-      CX.fillStyle='#1a1a2a'; CX.fillRect(LX-40,LY+12,80,6);
-      CX.fillStyle='hsl('+(40-pw*35)+',100%,55%)';
-      CX.fillRect(LX-40,LY+12,80*pw,6);
+    var BX = LX, BY = LY - 28;
+    var ang = aimAngleFromX(mouse.x);
+    var r = 70;
+    var px = BX + Math.cos(ang)*r;
+    var py = BY - Math.sin(ang)*r;
+    CX.save();
+    CX.strokeStyle='rgba(150,220,255,0.4)';
+    CX.lineWidth=1.6;
+    CX.beginPath(); CX.arc(BX, BY, r, Math.PI, 0); CX.stroke();
+    // 方向ライン
+    CX.strokeStyle='rgba(150,220,255,0.65)';
+    CX.beginPath(); CX.moveTo(BX,BY); CX.lineTo(px,py); CX.stroke();
+    // 方向マーカー
+    CX.fillStyle='rgba(150,220,255,0.9)';
+    CX.beginPath(); CX.arc(px,py,4,0,Math.PI*2); CX.fill();
+
+    // 予測ガイド（AIM_STEPSに応じて伸びる）
+    var sx=BX, sy=BY;
+    var svx=Math.cos(ang)*12, svy=-Math.sin(ang)*12;
+    CX.setLineDash([5,8]);
+    CX.strokeStyle='rgba(150,220,255,0.35)';
+    CX.lineWidth=1.5; CX.beginPath();
+    CX.moveTo(sx,sy);
+    for (var k=0;k<AIM_STEPS;k++) {
+      sx+=svx;sy+=svy;
+      if(sx<BR){sx=BR;svx=Math.abs(svx);}
+      if(sx>W-BR){sx=W-BR;svx=-Math.abs(svx);}
+      if(sy<BR){sy=BR;svy=Math.abs(svy);}
+      if(sy>H-BR){sy=H-BR;svy=-Math.abs(svy);}
+      CX.lineTo(sx,sy);
     }
+    CX.stroke();
+    CX.restore();
   }
 
   // プレイヤーキャラ
