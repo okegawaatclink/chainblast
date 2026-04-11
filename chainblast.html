@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>CHAIN BLAST</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#0d0d14;
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  height:100vh; font-family:monospace; color:#fff;
+  user-select:none; overflow:hidden;
+}
+#chain { height:32px; font-size:24px; font-weight:bold; color:#f70;
+  letter-spacing:4px; text-shadow:0 0 14px #f70; margin-bottom:4px; }
+#hud { margin-bottom:6px; font-size:13px; letter-spacing:2px; color:#888; }
+canvas { display:block; cursor:crosshair; border:1px solid #222; }
+#msg { margin-top:6px; font-size:11px; color:#666; min-height:14px; letter-spacing:1px; }
+</style>
+</head>
+<body>
+<div id="chain"></div>
+<div id="hud">WAVE <span id="wv">1</span>/10 &nbsp; SCORE <span id="sc">0</span> &nbsp; BEST <span id="bst">0</span></div>
+<canvas id="c"></canvas>
+<div id="msg"></div>
+<script>
+// ================================================================
+//  CANVAS
+// ================================================================
+var CV = document.getElementById('c');
+var CX = CV.getContext('2d');
+var W = 560, H = 500;
+CV.width = W; CV.height = H;
+
+var domChain = document.getElementById('chain');
+var domWave  = document.getElementById('wv');
+var domScore = document.getElementById('sc');
+var domBest  = document.getElementById('bst');
+var domMsg   = document.getElementById('msg');
+
+// ================================================================
+//  CONSTANTS
+// ================================================================
+var COLS      = 7;
+var ER        = 17;                    // enemy radius
+var BR        = 7;                     // bullet radius
+var COL_W     = W / COLS;              // ~80px
+var ROW_H     = ER * 2 + 6;           // ~40px  (vertical spacing)
+var EXPL_R    = ER * 1.6;             // explosion chain radius (narrow)
+var MAX_ROWS  = Math.floor((H - 80) / ROW_H);  // how many rows fit
+var FLOOR_ROW = MAX_ROWS - 1;          // index of bottom row (0=top)
+var LX        = W / 2;
+var LY        = H - 44;               // launcher Y
+var DROP_SEC  = 0.45;                 // drop animation seconds
+var MAX_WAVE  = 10;
+
+// row index → canvas Y (center of enemy)
+function rowY(row) {
+  return 30 + row * ROW_H + ER;
+}
+
+// ================================================================
+//  STATE
+// ================================================================
+var phase;        // 'drop'|'aim'|'bullet'|'chain'|'over'|'clear'
+var enemies;      // [{col, row, x, y, st, ...}]
+var sparks;
+var bul;
+var score;
+var bestScore = 0;
+var wave;
+var chainCnt;
+var shakeT;
+var dropT;        // elapsed in drop animation
+var dropList;     // [{en, y0, y1}] for animation
+var mouse = { x: W/2, y: LY-60, dn: false };
+
+// ================================================================
+//  HELPERS
+// ================================================================
+function rnd(a,b) { return a + Math.random()*(b-a); }
+function dst(ax,ay,bx,by) { return Math.hypot(ax-bx,ay-by); }
+function shuffleArr(a) {
+  for (var i=a.length-1; i>0; i--) {
+    var j=Math.floor(Math.random()*(i+1)), t=a[i]; a[i]=a[j]; a[j]=t;
+  }
+}
+function setMsg(s) { domMsg.textContent = s; }
+function updateHUD() {
+  domWave.textContent  = wave + '/' + MAX_WAVE;
+  domScore.textContent = score;
+  domBest.textContent  = bestScore;
+}
+function makeEnemy(x, row) {
+  return {
+    x: x, y: rowY(row), row: row,
+    r: ER,
+    st: 'n',
+    ignT: 0, xplT: 0, lv: 0,
+    pt: Math.random() * 6.28,
+    hitCool: 0,
+  };
+}
+
+// ================================================================
+//  INIT
+// ================================================================
+function init() {
+  enemies  = [];
+  sparks   = [];
+  bul      = null;
+  score    = 0;
+  wave     = 0;
+  chainCnt = 0;
+  shakeT   = 0;
+  dropT    = 0;
+  dropList = [];
+  domChain.textContent = '';
+  setMsg('');
+  updateHUD();
+  nextWave();   // wave 1
+}
+
+// ================================================================
+//  WAVE / DROP LOGIC
+// ================================================================
+function nextWave() {
+  wave++;
+  chainCnt = 0;
+  domChain.textContent = '';
+  updateHUD();
+
+  if (wave > MAX_WAVE) {
+    if (score > bestScore) bestScore = score;
+    updateHUD();
+    phase = 'clear';
+    return;
+  }
+
+  var n  = enemyCount(wave);
+  var dl = [];
+
+  // 既存の敵を1行下へ
+  for (var i=0; i<enemies.length; i++) {
+    var en = enemies[i];
+    if (en.st === 'd') continue;
+    var newRow = en.row + 1;
+    dl.push({ en: en, row1: newRow, y0: en.y, y1: rowY(newRow) });
+  }
+
+  // 新しい敵をランダムX座標で上から降らせる
+  var newXs = randomXPositions(n);
+  for (var i=0; i<n; i++) {
+    var en = makeEnemy(newXs[i], 0);
+    var startY = rowY(-1) - i * 12; // 少し時差
+    en.y = startY;
+    dl.push({ en: en, row1: 0, y0: startY, y1: rowY(0) });
+    enemies.push(en);
+  }
+
+  startDrop(dl);
+}
+
+// n個のX座標をランダムに決める（重ならないよう間隔を確保）
+function randomXPositions(n) {
+  var margin = ER + 4;
+  var xs = [];
+  var tries = 0;
+  while (xs.length < n && tries < 2000) {
+    tries++;
+    var x = rnd(margin, W - margin);
+    var ok = true;
+    for (var j=0; j<xs.length; j++) {
+      if (Math.abs(xs[j] - x) < ER * 2.4) { ok = false; break; }
+    }
+    if (ok) xs.push(x);
+  }
+  return xs;
+}
+
+function dropExistingOneRow(cb) {
+  var dl = [];
+  for (var i=0; i<enemies.length; i++) {
+    var en = enemies[i];
+    if (en.st === 'd') continue;
+    var newRow = en.row + 1;
+    dl.push({ en: en, row1: newRow, y0: en.y, y1: rowY(newRow) });
+  }
+  startDrop(dl, cb);
+}
+
+function startDrop(dl, cb) {
+  dropList = dl;
+  dropT    = 0;
+  phase    = 'drop';
+  dropList._cb = cb || null;
+}
+
+function enemyCount(w) {
+  // wave1=3, wave2=4 ... wave7+=7, max=COLS
+  return Math.min(2 + w, COLS);
+}
+
+// ================================================================
+//  INPUT
+// ================================================================
+CV.addEventListener('mousedown', function(ev) {
+  var r = CV.getBoundingClientRect();
+  mouse.x = ev.clientX - r.left;
+  mouse.y = ev.clientY - r.top;
+  if (phase === 'aim') mouse.dn = true;
+  if (phase === 'over' || phase === 'clear') init();
+});
+CV.addEventListener('mousemove', function(ev) {
+  var r = CV.getBoundingClientRect();
+  mouse.x = ev.clientX - r.left;
+  mouse.y = ev.clientY - r.top;
+});
+window.addEventListener('mouseup', function(ev) {
+  if (!mouse.dn) return;
+  mouse.dn = false;
+  if (phase !== 'aim') return;
+  var r  = CV.getBoundingClientRect();
+  var mx = ev.clientX - r.left, my = ev.clientY - r.top;
+  var dx = LX - mx, dy = LY - my;
+  var d  = Math.hypot(dx, dy);
+  if (d < 8) return;
+  var spd = Math.min(d/65, 1)*13 + 4;
+  bul   = { x:LX, y:LY, vx:(dx/d)*spd, vy:(dy/d)*spd, r:BR, wallHits:0 };
+  phase = 'bullet';
+  setMsg('');
+});
+
+// ================================================================
+//  SPARKS / EXPLOSION
+// ================================================================
+function addExplosion(x, y, lv) {
+  var pal = ['#f70','#fb0','#f30','#fff','#fa0'];
+  for (var i=0; i<20+lv*4; i++) {
+    var a=Math.random()*6.28, s=rnd(2, 6+lv);
+    sparks.push({x:x,y:y, vx:Math.cos(a)*s, vy:Math.sin(a)*s,
+      life:1, dec:rnd(0.022,0.05), r:rnd(2,4.5),
+      col:pal[Math.floor(Math.random()*pal.length)]});
+  }
+  sparks.push({x:x, y:y, ring:true, r:4, life:1, dec:0.035});
+}
+
+// ================================================================
+//  GAME LOGIC
+// ================================================================
+function hitEnemy(en) {
+  if (en.st === 'n') { en.st='i'; en.ignT=0.28; }
+  else if (en.st === 'i') { doExplode(en); }
+}
+
+function doExplode(en) {
+  if (en.st==='x'||en.st==='d') return;
+  en.st='x'; en.xplT=0.4;
+  chainCnt++;
+  score += Math.floor(10 * Math.pow(chainCnt, 1.3));
+  if (score > bestScore) bestScore = score;
+  updateHUD();
+  domChain.textContent = chainCnt + ' CHAIN';
+  domChain.style.color = chainCnt>=8?'#f00':chainCnt>=5?'#f70':'#fb0';
+  if (chainCnt >= 5) shakeT = 0.25;
+  addExplosion(en.x, en.y, en.lv);
+  for (var i=0; i<enemies.length; i++) {
+    var o = enemies[i];
+    if (o===en||o.st==='x'||o.st==='d') continue;
+    if (dst(en.x,en.y,o.x,o.y) > EXPL_R+o.r) continue;
+    if (o.st==='i') { o.ignT=0.03; }
+    else { o.st='i'; o.lv=en.lv+1; o.ignT=0.25*Math.pow(0.9,o.lv); }
+  }
+}
+
+function anyActive() {
+  for (var i=0; i<enemies.length; i++) {
+    if (enemies[i].st==='i'||enemies[i].st==='x') return true;
+  }
+  return false;
+}
+
+function checkGameOver() {
+  // any non-dead enemy at or beyond FLOOR_ROW?
+  for (var i=0; i<enemies.length; i++) {
+    var e = enemies[i];
+    if (e.st==='d') continue;
+    if (e.row >= FLOOR_ROW) return true;
+  }
+  return false;
+}
+
+function endTurn() {
+  // remove dead
+  var alive = [];
+  for (var i=0; i<enemies.length; i++) {
+    if (enemies[i].st !== 'd') alive.push(enemies[i]);
+  }
+  enemies = alive;
+
+  if (checkGameOver()) {
+    if (score > bestScore) bestScore = score;
+    updateHUD();
+    phase = 'over';
+    setMsg('');
+    return;
+  }
+
+  nextWave();
+}
+
+// ================================================================
+//  MAIN LOOP
+// ================================================================
+var lastTs = 0;
+function loop(ts) {
+  var dt = Math.min((ts - lastTs)/1000, 0.05);
+  lastTs = ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function update(dt) {
+  // sparks always
+  for (var i=sparks.length-1; i>=0; i--) {
+    var sp = sparks[i];
+    if (sp.ring) { sp.r += (EXPL_R - sp.r)*0.16; }
+    else { sp.x+=sp.vx; sp.y+=sp.vy; sp.vy+=0.18; sp.vx*=0.96; }
+    sp.life -= sp.dec;
+    if (sp.life<=0) sparks.splice(i,1);
+  }
+  if (shakeT>0) shakeT -= dt;
+  if (phase==='over'||phase==='clear') return;
+
+  // ── DROP ──
+  if (phase === 'drop') {
+    dropT += dt;
+    var prog = Math.min(dropT / DROP_SEC, 1);
+    var ease = 1 - Math.pow(1-prog, 3);
+    for (var i=0; i<dropList.length; i++) {
+      var tg = dropList[i];
+      tg.en.y = tg.y0 + (tg.y1 - tg.y0) * ease;
+    }
+    if (prog >= 1) {
+      for (var i=0; i<dropList.length; i++) {
+        var tg = dropList[i];
+        tg.en.y   = tg.y1;
+        tg.en.row = tg.row1;
+      }
+      var cb = dropList._cb;
+      dropList = [];
+      if (cb) { cb(); return; }
+      // check game over after drop
+      if (checkGameOver()) {
+        if (score > bestScore) bestScore = score;
+        updateHUD();
+        phase = 'over';
+        return;
+      }
+      phase = 'aim';
+      setMsg('引っ張って離すと発射');
+    }
+    return;
+  }
+
+  // ── BULLET ──
+  if (phase === 'bullet' && bul) {
+    bul.x += bul.vx; bul.y += bul.vy;
+
+    // 壁反射：3回で消滅
+    var bounced = false;
+    if (bul.x-bul.r<0)  {bul.x=bul.r;     bul.vx= Math.abs(bul.vx); bul.wallHits++; bounced=true;}
+    if (bul.x+bul.r>W)  {bul.x=W-bul.r;   bul.vx=-Math.abs(bul.vx); bul.wallHits++; bounced=true;}
+    if (bul.y-bul.r<0)  {bul.y=bul.r;     bul.vy= Math.abs(bul.vy); bul.wallHits++; bounced=true;}
+    if (bul.y+bul.r>H)  {bul.y=H-bul.r;   bul.vy=-Math.abs(bul.vy); bul.wallHits++; bounced=true;}
+
+    if (bul.wallHits >= 3) {
+      bul = null; // 3回反射で消滅
+    } else {
+      // 敵との当たり判定（弾は消えない）
+      for (var i=0; i<enemies.length; i++) {
+        var en = enemies[i];
+        if (en.st==='d'||en.st==='x') continue;
+        if (en.hitCool > 0) continue; // 同じ敵に連続ヒット防止
+        if (dst(bul.x,bul.y,en.x,en.y) < bul.r+en.r) {
+          hitEnemy(en);
+          en.hitCool = 0.15; // 0.15秒クールダウン
+          var nx=bul.x-en.x, ny=bul.y-en.y, nd=Math.hypot(nx,ny)||1;
+          nx/=nd; ny/=nd;
+          var dot=bul.vx*nx+bul.vy*ny;
+          bul.vx-=2*dot*nx; bul.vy-=2*dot*ny;
+        }
+      }
+      if (Math.hypot(bul.vx,bul.vy)<0.4) bul=null;
+    }
+
+    // 弾が消えたら連鎖フェーズへ
+    if (!bul) phase = 'chain';
+  }
+
+  // hitCool を常時カウントダウン
+  for (var i=0; i<enemies.length; i++) {
+    var en=enemies[i];
+    en.pt += dt*3.5;
+    if (en.hitCool > 0) en.hitCool -= dt;
+  }
+
+  // ── CHAIN ──
+  if (phase === 'chain') {
+    var stillActive = false;
+    for (var i=0; i<enemies.length; i++) {
+      var en=enemies[i];
+      if (en.st==='i') {
+        stillActive = true;
+        en.ignT-=dt;
+        if (en.ignT<=0) doExplode(en);
+      }
+      if (en.st==='x') {
+        stillActive = true;
+        en.xplT-=dt;
+        if (en.xplT<=0) en.st='d';
+      }
+    }
+    if (!stillActive) endTurn(); // 全爆発・消滅が完了してからターン終了
+  }
+
+  // aim phase — pulse handled above
+  
+}
+
+// ================================================================
+//  DRAW
+// ================================================================
+function draw() {
+  CX.save();
+  if (shakeT>0) CX.translate((Math.random()-0.5)*shakeT*12,(Math.random()-0.5)*shakeT*12);
+
+  // BG
+  CX.fillStyle='#0d0d14'; CX.fillRect(0,0,W,H);
+
+  // subtle grid
+  CX.strokeStyle='rgba(255,255,255,0.025)'; CX.lineWidth=1;
+  for (var gx=0; gx<=W; gx+=COL_W) {CX.beginPath();CX.moveTo(gx,0);CX.lineTo(gx,H);CX.stroke();}
+  for (var gy=30; gy<=H; gy+=ROW_H) {CX.beginPath();CX.moveTo(0,gy);CX.lineTo(W,gy);CX.stroke();}
+
+  // floor line (game over line)
+  var flY = rowY(FLOOR_ROW) + ER + 3;
+  CX.save();
+  var da = 0.5 + Math.sin(Date.now()/300)*0.3;
+  CX.strokeStyle='rgba(255,40,0,'+da+')'; CX.lineWidth=2; CX.setLineDash([8,5]);
+  CX.beginPath(); CX.moveTo(0,flY); CX.lineTo(W,flY); CX.stroke();
+  CX.setLineDash([]);
+  CX.fillStyle='rgba(255,40,0,0.6)'; CX.font='10px monospace'; CX.textAlign='right';
+  CX.fillText('GAME OVER LINE', W-6, flY-4);
+  CX.restore();
+
+  // border
+  CX.strokeStyle='rgba(255,100,0,0.08)'; CX.lineWidth=2; CX.strokeRect(1,1,W-2,H-2);
+
+  // sparks
+  for (var i=0; i<sparks.length; i++) {
+    var sp=sparks[i];
+    if (sp.life<=0) continue;
+    if (sp.ring) {
+      CX.globalAlpha=sp.life*0.45; CX.strokeStyle='#f70'; CX.lineWidth=2;
+      CX.beginPath(); CX.arc(sp.x,sp.y,Math.max(1,sp.r),0,6.28); CX.stroke();
+    } else {
+      CX.globalAlpha=sp.life; CX.fillStyle=sp.col;
+      CX.beginPath(); CX.arc(sp.x,sp.y,Math.max(0.3,sp.r*sp.life),0,6.28); CX.fill();
+    }
+  }
+  CX.globalAlpha=1;
+
+  // enemies
+  for (var i=0; i<enemies.length; i++) {
+    var en=enemies[i];
+    if (en.st==='d') continue;
+    CX.save(); CX.translate(en.x, en.y);
+    if (en.st==='n') {
+      CX.shadowColor='#4af'; CX.shadowBlur=7;
+      CX.fillStyle='#1a2a3a';
+      CX.beginPath(); CX.arc(0,0,ER,0,6.28); CX.fill();
+      CX.strokeStyle='#4af'; CX.lineWidth=1.5; CX.stroke();
+      CX.shadowBlur=0; CX.fillStyle='#6cf';
+      CX.beginPath(); CX.arc(0,0,4,0,6.28); CX.fill();
+    } else if (en.st==='i') {
+      var pulse=1+Math.sin(en.pt*4)*0.2;
+      CX.scale(pulse,pulse);
+      CX.shadowColor='#f80'; CX.shadowBlur=20;
+      CX.fillStyle='#3a1500';
+      CX.beginPath(); CX.arc(0,0,ER,0,6.28); CX.fill();
+      CX.strokeStyle='#f80'; CX.lineWidth=2.5; CX.stroke();
+      CX.shadowBlur=0; CX.fillStyle='#fb0';
+      CX.beginPath(); CX.arc(0,0,5+Math.sin(en.pt*6)*2,0,6.28); CX.fill();
+    } else if (en.st==='x') {
+      var prog=Math.max(0,1-en.xplT/0.4);
+      CX.globalAlpha=Math.max(0,1-prog);
+      CX.shadowColor='#f30'; CX.shadowBlur=28;
+      CX.fillStyle='hsl('+(30+prog*30)+',100%,'+(50+prog*22)+'%)';
+      CX.beginPath(); CX.arc(0,0,Math.max(1,ER*(1+prog*2.2)),0,6.28); CX.fill();
+    }
+    CX.restore();
+  }
+  CX.globalAlpha=1;
+
+  // aim line
+  if (phase==='aim' && mouse.dn) {
+    var adx=LX-mouse.x, ady=LY-mouse.y, ad=Math.hypot(adx,ady);
+    if (ad>8) {
+      var pw=Math.min(ad/65,1), spd=pw*13+4, anx=adx/ad, any=ady/ad;
+      CX.save();
+      CX.setLineDash([5,8]);
+      CX.strokeStyle='rgba(255,180,80,'+(0.25+pw*0.55)+')';
+      CX.lineWidth=1.5; CX.beginPath();
+      var sx=LX,sy=LY,svx=anx*spd,svy=any*spd;
+      CX.moveTo(sx,sy);
+      for (var k=0;k<60;k++) {
+        sx+=svx;sy+=svy;
+        if(sx<BR){sx=BR;svx=Math.abs(svx);}
+        if(sx>W-BR){sx=W-BR;svx=-Math.abs(svx);}
+        if(sy<BR){sy=BR;svy=Math.abs(svy);}
+        if(sy>H-BR){sy=H-BR;svy=-Math.abs(svy);}
+        CX.lineTo(sx,sy);
+      }
+      CX.stroke(); CX.restore();
+      CX.fillStyle='#1a1a2a'; CX.fillRect(LX-38,LY+18,76,5);
+      CX.fillStyle='hsl('+(40-pw*35)+',100%,55%)';
+      CX.fillRect(LX-38,LY+18,76*pw,5);
+    }
+  }
+
+  // bullet
+  if (bul) {
+    CX.save();
+    CX.shadowColor='#fff'; CX.shadowBlur=14; CX.fillStyle='#fff';
+    CX.beginPath(); CX.arc(bul.x,bul.y,bul.r,0,6.28); CX.fill();
+    CX.globalAlpha=0.3; CX.fillStyle='#fb0';
+    CX.beginPath(); CX.arc(bul.x-bul.vx*1.8,bul.y-bul.vy*1.8,bul.r*0.65,0,6.28); CX.fill();
+    CX.restore();
+  }
+
+  // launcher
+  CX.save();
+  CX.shadowColor='#4af'; CX.shadowBlur=10;
+  CX.strokeStyle='#4af'; CX.lineWidth=2; CX.fillStyle='#112233';
+  CX.beginPath(); CX.arc(LX,LY,11,0,6.28); CX.fill(); CX.stroke();
+  CX.shadowBlur=0; CX.fillStyle='#6cf';
+  CX.beginPath(); CX.arc(LX,LY,4,0,6.28); CX.fill();
+  CX.restore();
+
+  // phase label
+  var lbl={drop:'↓ DROP',aim:'► AIM',bullet:'◉ SHOT',chain:'💥 CHAIN',endturn:'',over:'',clear:''};
+  CX.textAlign='left'; CX.font='11px monospace';
+  CX.fillStyle='rgba(255,255,255,0.25)';
+  CX.fillText(lbl[phase]||'', 6, 16);
+
+  // wave progress bar (top)
+  var barW = W * (wave / MAX_WAVE);
+  CX.fillStyle='rgba(255,120,0,0.15)';
+  CX.fillRect(0, 0, barW, 3);
+  CX.fillStyle='rgba(255,120,0,0.5)';
+  CX.fillRect(0, 0, barW, 1);
+
+  // GAME OVER
+  if (phase==='over') {
+    CX.fillStyle='rgba(0,0,0,0.75)'; CX.fillRect(0,0,W,H);
+    CX.textAlign='center';
+    CX.shadowColor='#f00'; CX.shadowBlur=28;
+    CX.fillStyle='#f44'; CX.font='bold 32px monospace';
+    CX.fillText('GAME OVER', W/2, H/2-30);
+    CX.shadowBlur=0;
+    CX.fillStyle='#fff'; CX.font='18px monospace';
+    CX.fillText('SCORE: '+score, W/2, H/2+8);
+    CX.fillStyle='#888'; CX.font='14px monospace';
+    CX.fillText('WAVE: '+(wave-1)+' / '+MAX_WAVE, W/2, H/2+34);
+    CX.fillStyle='#555'; CX.font='12px monospace';
+    CX.fillText('クリックでリスタート', W/2, H/2+60);
+  }
+
+  // GAME CLEAR
+  if (phase==='clear') {
+    CX.fillStyle='rgba(0,0,0,0.75)'; CX.fillRect(0,0,W,H);
+    CX.textAlign='center';
+    var glow = 0.7 + Math.sin(Date.now()/300)*0.3;
+    CX.shadowColor='#ff0'; CX.shadowBlur=30*glow;
+    CX.fillStyle='#ff0'; CX.font='bold 32px monospace';
+    CX.fillText('GAME CLEAR!', W/2, H/2-30);
+    CX.shadowBlur=0;
+    CX.fillStyle='#fff'; CX.font='18px monospace';
+    CX.fillText('SCORE: '+score, W/2, H/2+10);
+    CX.fillStyle='#888'; CX.font='14px monospace';
+    CX.fillText('ALL '+MAX_WAVE+' WAVES CLEARED', W/2, H/2+36);
+    CX.fillStyle='#555'; CX.font='12px monospace';
+    CX.fillText('クリックでリスタート', W/2, H/2+62);
+  }
+
+  CX.restore();
+}
+
+// ================================================================
+//  START
+// ================================================================
+init();
+</script>
+</body>
+</html>
