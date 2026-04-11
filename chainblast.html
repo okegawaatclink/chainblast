@@ -12,12 +12,12 @@ body {
   height:100vh; font-family:monospace; color:#fff;
   user-select:none; overflow:hidden;
 }
-#chain { height:32px; font-size:24px; font-weight:bold; color:#f70;
+#chain { height:38px; font-size:28px; font-weight:bold; color:#f70;
   letter-spacing:4px; text-shadow:0 0 14px #f70; margin-bottom:4px; }
-#hud { margin-bottom:4px; font-size:13px; letter-spacing:2px; color:#888; }
-#ver { margin-bottom:2px; font-size:10px; letter-spacing:2px; color:#444; }
-#stats { margin-bottom:6px; font-size:11px; letter-spacing:1px; color:#6e6e7a; }
-canvas { display:block; cursor:crosshair; border:1px solid #222; }
+#hud { margin-bottom:4px; font-size:16px; letter-spacing:2px; color:#bbb; }
+#ver { margin-bottom:4px; font-size:14px; letter-spacing:2px; color:#666; }
+#stats { margin-bottom:6px; font-size:14px; letter-spacing:1px; color:#9aa; }
+canvas { display:block; cursor:crosshair; border:1px solid #222; touch-action:none; }
 #msg { margin-top:6px; font-size:11px; color:#666; min-height:14px; letter-spacing:1px; }
 </style>
 </head>
@@ -47,16 +47,35 @@ var domMul   = document.getElementById('mul');
 var domAim   = document.getElementById('aim');
 var domBnc   = document.getElementById('bnc');
 var domRng   = document.getElementById('rng');
+var usePointer = !!window.PointerEvent;
+var activeTouchId = null;
+var activePointerId = null;
 
 function getPos(ev) {
   var r=CV.getBoundingClientRect();
+  var sx = W / r.width;
+  var sy = H / r.height;
   if (ev.touches && ev.touches.length) {
-    return { x: ev.touches[0].clientX - r.left, y: ev.touches[0].clientY - r.top };
+    return { x: (ev.touches[0].clientX - r.left) * sx, y: (ev.touches[0].clientY - r.top) * sy };
   }
   if (ev.changedTouches && ev.changedTouches.length) {
-    return { x: ev.changedTouches[0].clientX - r.left, y: ev.changedTouches[0].clientY - r.top };
+    return { x: (ev.changedTouches[0].clientX - r.left) * sx, y: (ev.changedTouches[0].clientY - r.top) * sy };
   }
-  return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+  return { x: (ev.clientX - r.left) * sx, y: (ev.clientY - r.top) * sy };
+}
+
+function getTouchPos(ev, id) {
+  var r=CV.getBoundingClientRect();
+  var sx = W / r.width;
+  var sy = H / r.height;
+  var list = ev.touches && ev.touches.length ? ev.touches : ev.changedTouches;
+  if (!list || !list.length) return null;
+  for (var i=0; i<list.length; i++) {
+    if (list[i].identifier === id) {
+      return { x: (list[i].clientX - r.left) * sx, y: (list[i].clientY - r.top) * sy };
+    }
+  }
+  return null;
 }
 
 function resizeCanvasToFit() {
@@ -278,6 +297,7 @@ function endTurn() {
 //  INPUT
 // ================================================================
 CV.addEventListener('mousedown', function(ev) {
+  if (usePointer) return;
   var p=getPos(ev);
   mouse.x=p.x; mouse.y=p.y;
   if (phase==='select') {
@@ -288,17 +308,19 @@ CV.addEventListener('mousedown', function(ev) {
   if (phase==='over'||phase==='clear') init();
 });
 CV.addEventListener('mousemove', function(ev) {
+  if (usePointer) return;
   var p=getPos(ev);
   mouse.x=p.x; mouse.y=p.y;
 });
 window.addEventListener('mouseup', function(ev) {
+  if (usePointer) return;
   if (!mouse.dn) return;
   mouse.dn=false;
   if (phase!=='aim') return;
   var p=getPos(ev);
   var mx=p.x, my=p.y;
   var BX = LX, BY = LY - 28;
-  var dx=BX-mx, dy=BY-my, d=Math.hypot(dx,dy);
+  var dx=mx-BX, dy=my-BY, d=Math.hypot(dx,dy);
   if (d<8) return;
   var spd=Math.min(d/65,1)*14+4;
   bul={x:BX, y:BY, vx:(dx/d)*spd, vy:(dy/d)*spd, r:BR, wallHits:0};
@@ -308,8 +330,11 @@ window.addEventListener('mouseup', function(ev) {
 
 // touch support
 CV.addEventListener('touchstart', function(ev) {
+  if (usePointer) return;
   ev.preventDefault();
-  var p=getPos(ev);
+  if (activeTouchId!==null) return;
+  activeTouchId = ev.touches[0].identifier;
+  var p=getTouchPos(ev, activeTouchId) || getPos(ev);
   mouse.x=p.x; mouse.y=p.y;
   if (phase==='select') {
     handleSelectClick(mouse.x, mouse.y);
@@ -319,25 +344,79 @@ CV.addEventListener('touchstart', function(ev) {
   if (phase==='over'||phase==='clear') init();
 }, { passive:false });
 CV.addEventListener('touchmove', function(ev) {
+  if (usePointer) return;
   ev.preventDefault();
-  var p=getPos(ev);
+  if (activeTouchId===null) return;
+  var p=getTouchPos(ev, activeTouchId);
+  if (!p) return;
   mouse.x=p.x; mouse.y=p.y;
 }, { passive:false });
 window.addEventListener('touchend', function(ev) {
+  if (usePointer) return;
   if (!mouse.dn) return;
   ev.preventDefault();
   mouse.dn=false;
+  var id = activeTouchId;
+  activeTouchId = null;
   if (phase!=='aim') return;
-  var p=getPos(ev);
+  var p=getTouchPos(ev, id) || getPos(ev);
   var mx=p.x, my=p.y;
   var BX = LX, BY = LY - 28;
-  var dx=BX-mx, dy=BY-my, d=Math.hypot(dx,dy);
+  var dx=mx-BX, dy=my-BY, d=Math.hypot(dx,dy);
   if (d<8) return;
   var spd=Math.min(d/65,1)*14+4;
   bul={x:BX, y:BY, vx:(dx/d)*spd, vy:(dy/d)*spd, r:BR, wallHits:0};
   phase='bullet'; setMsg('');
   playerAnim.shooting=true; playerAnim.shotT=0;
 }, { passive:false });
+window.addEventListener('touchcancel', function(ev) {
+  if (usePointer) return;
+  activeTouchId = null;
+  mouse.dn=false;
+}, { passive:false });
+
+if (usePointer) {
+  CV.addEventListener('pointerdown', function(ev) {
+    ev.preventDefault();
+    if (activePointerId!==null) return;
+    activePointerId = ev.pointerId;
+    var p=getPos(ev);
+    mouse.x=p.x; mouse.y=p.y;
+    if (phase==='select') {
+      handleSelectClick(mouse.x, mouse.y);
+      return;
+    }
+    if (phase==='aim') mouse.dn=true;
+    if (phase==='over'||phase==='clear') init();
+  });
+  CV.addEventListener('pointermove', function(ev) {
+    ev.preventDefault();
+    if (activePointerId!==ev.pointerId) return;
+    var p=getPos(ev);
+    mouse.x=p.x; mouse.y=p.y;
+  });
+  window.addEventListener('pointerup', function(ev) {
+    if (activePointerId!==ev.pointerId) return;
+    activePointerId = null;
+    if (!mouse.dn) return;
+    ev.preventDefault();
+    mouse.dn=false;
+    if (phase!=='aim') return;
+    var p=getPos(ev);
+    var mx=p.x, my=p.y;
+    var BX = LX, BY = LY - 28;
+    var dx=mx-BX, dy=my-BY, d=Math.hypot(dx,dy);
+    if (d<8) return;
+    var spd=Math.min(d/65,1)*14+4;
+    bul={x:BX, y:BY, vx:(dx/d)*spd, vy:(dy/d)*spd, r:BR, wallHits:0};
+    phase='bullet'; setMsg('');
+    playerAnim.shooting=true; playerAnim.shotT=0;
+  });
+  window.addEventListener('pointercancel', function(ev) {
+    activePointerId = null;
+    mouse.dn=false;
+  });
+}
 
 // ================================================================
 //  SPARKS
@@ -954,7 +1033,7 @@ function draw() {
   // エイムライン
   if (phase==='aim' && mouse.dn) {
     var BX = LX, BY = LY - 28; // 弾の発射起点（bulletと同じ）
-    var adx=BX-mouse.x, ady=BY-mouse.y, ad=Math.hypot(adx,ady);
+    var adx=mouse.x-BX, ady=mouse.y-BY, ad=Math.hypot(adx,ady);
     if (ad>8) {
       var pw=Math.min(ad/65,1), spd=pw*14+4, anx=adx/ad, any=ady/ad;
       CX.save();
