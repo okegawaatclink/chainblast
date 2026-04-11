@@ -45,6 +45,17 @@ var domAim   = document.getElementById('aim');
 var domBnc   = document.getElementById('bnc');
 var domRng   = document.getElementById('rng');
 
+function getPos(ev) {
+  var r=CV.getBoundingClientRect();
+  if (ev.touches && ev.touches.length) {
+    return { x: ev.touches[0].clientX - r.left, y: ev.touches[0].clientY - r.top };
+  }
+  if (ev.changedTouches && ev.changedTouches.length) {
+    return { x: ev.changedTouches[0].clientX - r.left, y: ev.changedTouches[0].clientY - r.top };
+  }
+  return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+}
+
 function resizeCanvasToFit() {
   var hudH = document.getElementById('hud').getBoundingClientRect().height;
   var statsH = document.getElementById('stats').getBoundingClientRect().height;
@@ -264,8 +275,8 @@ function endTurn() {
 //  INPUT
 // ================================================================
 CV.addEventListener('mousedown', function(ev) {
-  var r=CV.getBoundingClientRect();
-  mouse.x=ev.clientX-r.left; mouse.y=ev.clientY-r.top;
+  var p=getPos(ev);
+  mouse.x=p.x; mouse.y=p.y;
   if (phase==='select') {
     handleSelectClick(mouse.x, mouse.y);
     return;
@@ -274,15 +285,15 @@ CV.addEventListener('mousedown', function(ev) {
   if (phase==='over'||phase==='clear') init();
 });
 CV.addEventListener('mousemove', function(ev) {
-  var r=CV.getBoundingClientRect();
-  mouse.x=ev.clientX-r.left; mouse.y=ev.clientY-r.top;
+  var p=getPos(ev);
+  mouse.x=p.x; mouse.y=p.y;
 });
 window.addEventListener('mouseup', function(ev) {
   if (!mouse.dn) return;
   mouse.dn=false;
   if (phase!=='aim') return;
-  var r=CV.getBoundingClientRect();
-  var mx=ev.clientX-r.left, my=ev.clientY-r.top;
+  var p=getPos(ev);
+  var mx=p.x, my=p.y;
   var BX = LX, BY = LY - 28;
   var dx=BX-mx, dy=BY-my, d=Math.hypot(dx,dy);
   if (d<8) return;
@@ -291,6 +302,39 @@ window.addEventListener('mouseup', function(ev) {
   phase='bullet'; setMsg('');
   playerAnim.shooting=true; playerAnim.shotT=0;
 });
+
+// touch support
+CV.addEventListener('touchstart', function(ev) {
+  ev.preventDefault();
+  var p=getPos(ev);
+  mouse.x=p.x; mouse.y=p.y;
+  if (phase==='select') {
+    handleSelectClick(mouse.x, mouse.y);
+    return;
+  }
+  if (phase==='aim') mouse.dn=true;
+  if (phase==='over'||phase==='clear') init();
+}, { passive:false });
+CV.addEventListener('touchmove', function(ev) {
+  ev.preventDefault();
+  var p=getPos(ev);
+  mouse.x=p.x; mouse.y=p.y;
+}, { passive:false });
+window.addEventListener('touchend', function(ev) {
+  if (!mouse.dn) return;
+  ev.preventDefault();
+  mouse.dn=false;
+  if (phase!=='aim') return;
+  var p=getPos(ev);
+  var mx=p.x, my=p.y;
+  var BX = LX, BY = LY - 28;
+  var dx=BX-mx, dy=BY-my, d=Math.hypot(dx,dy);
+  if (d<8) return;
+  var spd=Math.min(d/65,1)*14+4;
+  bul={x:BX, y:BY, vx:(dx/d)*spd, vy:(dy/d)*spd, r:BR, wallHits:0};
+  phase='bullet'; setMsg('');
+  playerAnim.shooting=true; playerAnim.shotT=0;
+}, { passive:false });
 
 // ================================================================
 //  SPARKS
