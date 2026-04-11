@@ -34,10 +34,7 @@ canvas { display:block; cursor:crosshair; border:1px solid #222; }
 // ================================================================
 var CV = document.getElementById('c');
 var CX = CV.getContext('2d');
-var W = 580, H = 540;
-if (window.innerHeight > window.innerWidth) {
-  W = 360; H = 640;
-}
+var W = 360, H = 640;
 CV.width = W; CV.height = H;
 
 var domChain = document.getElementById('chain');
