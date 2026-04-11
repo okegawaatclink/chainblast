@@ -134,6 +134,7 @@ var score, bestScore = 0, wave, chainCnt, shakeT;
 var scoreMul;
 var dropT, dropList;
 var mouse = { x: W/2, y: LY-60, dn: false, sx: W/2, sy: LY-60, hasStart:false };
+var curBounces, penaltyNextTurn=false, penaltyActive=false, turnKills=0;
 // プレイヤーキャラアニメ
 var playerAnim = { shotT: 0, shooting: false };
 var playerImg = new Image();
@@ -155,7 +156,7 @@ function updateHUD() {
   domBest.textContent  = bestScore;
   domMul.textContent   = scoreMul.toFixed(1);
   domAim.textContent   = AIM_STEPS;
-  domBnc.textContent   = MAX_BOUNCES;
+  domBnc.textContent   = curBounces;
   domRng.textContent   = EXPL_R_MULT.toFixed(2);
 }
 
@@ -185,6 +186,7 @@ function init() {
   enemies=[]; items=[]; sparks=[]; floatTexts=[]; bul=null;
   score=0; wave=0; chainCnt=0; shakeT=0; scoreMul=1.0;
   AIM_STEPS=10; MAX_BOUNCES=3; EXPL_R_MULT=2.15;
+  curBounces=MAX_BOUNCES; penaltyNextTurn=false; penaltyActive=false; turnKills=0;
   dropT=0; dropList=[];
   selectOptions=null; selectRects=null; prevPhase=null;
   domChain.textContent='';
@@ -304,6 +306,7 @@ function endTurn() {
     if (items[i].st!=='d') aliveItems.push(items[i]);
   }
   items=aliveItems;
+  if (turnKills===0) penaltyNextTurn=true;
   if (checkGameOver()) {
     if (score>bestScore) bestScore=score;
     updateHUD(); phase='over'; return;
@@ -492,6 +495,7 @@ function hitEnemy(en) {
 function doExplode(en) {
   if (en.st==='x'||en.st==='d') return;
   en.st='x'; en.xplT=0.42;
+  turnKills++;
   chainCnt++;
   score+=Math.floor(10*Math.pow(chainCnt,1.3)*scoreMul);
   if (score>bestScore) bestScore=score;
@@ -584,6 +588,11 @@ function update(dt) {
       }
       dropList=[];
       if (checkGameOver()) { if(score>bestScore)bestScore=score; updateHUD(); phase='over'; return; }
+      penaltyActive = penaltyNextTurn;
+      curBounces = penaltyActive ? 1 : MAX_BOUNCES;
+      penaltyNextTurn = false;
+      turnKills = 0;
+      updateHUD();
       phase='aim'; setMsg('引っ張って離すと発射');
     }
     return;
@@ -596,7 +605,7 @@ function update(dt) {
     if (bul.x+bul.r>W)  {bul.x=W-bul.r;   bul.vx=-Math.abs(bul.vx); bul.wallHits++;}
     if (bul.y-bul.r<0)  {bul.y=bul.r;     bul.vy= Math.abs(bul.vy); bul.wallHits++;}
     if (bul.y+bul.r>H)  {bul.y=H-bul.r;   bul.vy=-Math.abs(bul.vy); bul.wallHits++;}
-    if (bul.wallHits>=MAX_BOUNCES) { bul=null; }
+    if (bul.wallHits>=curBounces) { bul=null; }
     else {
       for (var i=0; i<enemies.length; i++) {
         var en=enemies[i];
@@ -656,6 +665,7 @@ function applyEffect(id, x, y) {
     txt = 'ガイド延長 +5';
   } else if (id==='bounce') {
     MAX_BOUNCES += 1;
+    if (!penaltyActive) curBounces = MAX_BOUNCES;
     txt = '反射回数 +1';
   } else if (id==='explr') {
     EXPL_R_MULT = Math.round((EXPL_R_MULT + 0.1) * 100) / 100;
