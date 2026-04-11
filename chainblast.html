@@ -14,7 +14,8 @@ body {
 }
 #chain { height:32px; font-size:24px; font-weight:bold; color:#f70;
   letter-spacing:4px; text-shadow:0 0 14px #f70; margin-bottom:4px; }
-#hud { margin-bottom:6px; font-size:13px; letter-spacing:2px; color:#888; }
+#hud { margin-bottom:4px; font-size:13px; letter-spacing:2px; color:#888; }
+#stats { margin-bottom:6px; font-size:11px; letter-spacing:1px; color:#6e6e7a; }
 canvas { display:block; cursor:crosshair; border:1px solid #222; }
 #msg { margin-top:6px; font-size:11px; color:#666; min-height:14px; letter-spacing:1px; }
 </style>
@@ -22,6 +23,7 @@ canvas { display:block; cursor:crosshair; border:1px solid #222; }
 <body>
 <div id="chain"></div>
 <div id="hud">WAVE <span id="wv">1</span>/10 &nbsp; SCORE <span id="sc">0</span> &nbsp; BEST <span id="bst">0</span></div>
+<div id="stats">x<span id="mul">1.0</span> &nbsp; AIM <span id="aim">10</span> &nbsp; BNC <span id="bnc">3</span> &nbsp; BLAST <span id="rng">2.15</span></div>
 <canvas id="c"></canvas>
 <div id="msg"></div>
 <script>
@@ -38,6 +40,24 @@ var domWave  = document.getElementById('wv');
 var domScore = document.getElementById('sc');
 var domBest  = document.getElementById('bst');
 var domMsg   = document.getElementById('msg');
+var domMul   = document.getElementById('mul');
+var domAim   = document.getElementById('aim');
+var domBnc   = document.getElementById('bnc');
+var domRng   = document.getElementById('rng');
+
+function resizeCanvasToFit() {
+  var hudH = document.getElementById('hud').getBoundingClientRect().height;
+  var statsH = document.getElementById('stats').getBoundingClientRect().height;
+  var chainH = domChain.getBoundingClientRect().height;
+  var msgH = domMsg.getBoundingClientRect().height;
+  var pad = 16;
+  var availW = window.innerWidth - pad*2;
+  var availH = window.innerHeight - (hudH + statsH + chainH + msgH + pad*4);
+  var scale = Math.max(0.1, Math.min(availW / W, availH / H));
+  CV.style.width = (W * scale) + 'px';
+  CV.style.height = (H * scale) + 'px';
+}
+window.addEventListener('resize', resizeCanvasToFit);
 
 // ================================================================
 //  CONSTANTS
@@ -70,6 +90,7 @@ function rowY(row) { return 30 + row * ROW_H + 20; }
 var phase;
 var enemies, items, sparks, floatTexts, bul;
 var score, bestScore = 0, wave, chainCnt, shakeT;
+var scoreMul;
 var dropT, dropList;
 var mouse = { x: W/2, y: LY-60, dn: false };
 // プレイヤーキャラアニメ
@@ -90,6 +111,10 @@ function updateHUD() {
   domWave.textContent  = wave+'/'+MAX_WAVE;
   domScore.textContent = score;
   domBest.textContent  = bestScore;
+  domMul.textContent   = scoreMul.toFixed(1);
+  domAim.textContent   = AIM_STEPS;
+  domBnc.textContent   = MAX_BOUNCES;
+  domRng.textContent   = EXPL_R_MULT.toFixed(2);
 }
 
 function makeEnemy(x, row, type) {
@@ -116,12 +141,13 @@ function makeItem(x, row) {
 // ================================================================
 function init() {
   enemies=[]; items=[]; sparks=[]; floatTexts=[]; bul=null;
-  score=0; wave=0; chainCnt=0; shakeT=0;
+  score=0; wave=0; chainCnt=0; shakeT=0; scoreMul=1.0;
   AIM_STEPS=10; MAX_BOUNCES=3; EXPL_R_MULT=2.15;
   dropT=0; dropList=[];
   selectOptions=null; selectRects=null; prevPhase=null;
   domChain.textContent='';
   setMsg(''); updateHUD();
+  resizeCanvasToFit();
   nextWave();
 }
 
@@ -311,7 +337,7 @@ function doExplode(en) {
   if (en.st==='x'||en.st==='d') return;
   en.st='x'; en.xplT=0.42;
   chainCnt++;
-  score+=Math.floor(10*Math.pow(chainCnt,1.3));
+  score+=Math.floor(10*Math.pow(chainCnt,1.3)*scoreMul);
   if (score>bestScore) bestScore=score;
   updateHUD();
   domChain.textContent=chainCnt+' CHAIN';
@@ -479,11 +505,10 @@ function applyEffect(id, x, y) {
     EXPL_R_MULT = Math.round((EXPL_R_MULT + 0.1) * 100) / 100;
     txt = '誘爆範囲 +0.1';
   } else {
-    score += 500;
-    if (score>bestScore) bestScore=score;
-    updateHUD();
-    txt = 'スコア +500';
+    scoreMul = Math.round((scoreMul + 0.2) * 10) / 10;
+    txt = '倍率 +0.2';
   }
+  updateHUD();
   floatTexts.push({x:x, y:y-20, text:txt, life:1});
 }
 
@@ -1008,11 +1033,11 @@ function draw() {
       var title = id==='aim'?'AIM GUIDE +5'
                 : id==='bounce'?'BOUNCE +1'
                 : id==='explr'?'BLAST RANGE +0.1'
-                : 'SCORE +500';
+                : 'SCORE MULT +0.2';
       var sub = id==='aim'?'ガイドライン延長'
               : id==='bounce'?'反射回数増加'
               : id==='explr'?'誘爆範囲拡大'
-              : 'スコア加算';
+              : 'スコア倍率上昇';
       CX.fillStyle='rgba(20,20,30,0.9)'; CX.fillRect(rects[i].x, rects[i].y, rects[i].w, rects[i].h);
       CX.strokeStyle='#ff0'; CX.lineWidth=2; CX.strokeRect(rects[i].x, rects[i].y, rects[i].w, rects[i].h);
       CX.fillStyle='#fff'; CX.font='bold 14px monospace';

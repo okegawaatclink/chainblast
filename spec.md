@@ -156,7 +156,7 @@ CHAIN（連鎖が解決する）
 - `AIM GUIDE +5`：エイムガイドの予測点数を+5
 - `BOUNCE +1`：弾の最大反射回数を+1
 - `BLAST RANGE +0.1`：爆発半径倍率を+0.1
-- `SCORE +500`：スコアを+500
+- `SCORE MULT +0.2`：スコア倍率を+0.2（加算式に乗算）
 
 ---
 
@@ -171,10 +171,11 @@ CHAIN（連鎖が解決する）
 
 ```
 爆発1回ごとに加算：
-  score += floor(10 × chainCount ^ 1.3)
+  score += floor(10 × chainCount ^ 1.3 × scoreMultiplier)
 ```
 
 - `chainCount` はそのターン中の累積爆発数
+- `scoreMultiplier` 初期値は1.0、アイテムで+0.2
 - ターン開始時（nextWave）にリセット
 - BEST スコアはセッション中保持
 
@@ -187,6 +188,7 @@ CHAIN（連鎖が解決する）
 | WAVE n/10 | 画面上部 |
 | SCORE | 画面上部 |
 | BEST | 画面上部 |
+| x倍率 / AIM / BNC / BLAST | 画面上部 |
 | N CHAIN | Canvasの上（大きく表示） |
 | フェーズ名 | Canvas左上（小さく） |
 | Waveプログレスバー | Canvas最上端（細いバー） |
