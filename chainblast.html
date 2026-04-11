@@ -89,9 +89,9 @@ function resizeCanvasToFit() {
   var statsH = document.getElementById('stats').getBoundingClientRect().height;
   var chainH = domChain.getBoundingClientRect().height;
   var msgH = domMsg.getBoundingClientRect().height;
-  var pad = 16;
-  var availW = window.innerWidth - pad*2;
-  var availH = window.innerHeight - (hudH + statsH + chainH + msgH + pad*4);
+  var pad = 0;
+  var availW = window.innerWidth;
+  var availH = window.innerHeight - (hudH + statsH + chainH + msgH + pad*2);
   var scale = Math.max(0.1, Math.min(availW / W, availH / H));
   CV.style.width = (W * scale) + 'px';
   CV.style.height = (H * scale) + 'px';
