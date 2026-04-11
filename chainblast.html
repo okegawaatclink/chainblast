@@ -15,12 +15,14 @@ body {
 #chain { height:32px; font-size:24px; font-weight:bold; color:#f70;
   letter-spacing:4px; text-shadow:0 0 14px #f70; margin-bottom:4px; }
 #hud { margin-bottom:4px; font-size:13px; letter-spacing:2px; color:#888; }
+#ver { margin-bottom:2px; font-size:10px; letter-spacing:2px; color:#444; }
 #stats { margin-bottom:6px; font-size:11px; letter-spacing:1px; color:#6e6e7a; }
 canvas { display:block; cursor:crosshair; border:1px solid #222; }
 #msg { margin-top:6px; font-size:11px; color:#666; min-height:14px; letter-spacing:1px; }
 </style>
 </head>
 <body>
+<div id="ver">VER <span id="vernum">1.1</span></div>
 <div id="chain"></div>
 <div id="hud">WAVE <span id="wv">1</span>/10 &nbsp; SCORE <span id="sc">0</span> &nbsp; BEST <span id="bst">0</span></div>
 <div id="stats">x<span id="mul">1.0</span> &nbsp; AIM <span id="aim">10</span> &nbsp; BNC <span id="bnc">3</span> &nbsp; BLAST <span id="rng">2.15</span></div>
@@ -33,6 +35,9 @@ canvas { display:block; cursor:crosshair; border:1px solid #222; }
 var CV = document.getElementById('c');
 var CX = CV.getContext('2d');
 var W = 580, H = 540;
+if (window.innerHeight > window.innerWidth) {
+  W = 360; H = 640;
+}
 CV.width = W; CV.height = H;
 
 var domChain = document.getElementById('chain');
@@ -40,6 +45,7 @@ var domWave  = document.getElementById('wv');
 var domScore = document.getElementById('sc');
 var domBest  = document.getElementById('bst');
 var domMsg   = document.getElementById('msg');
+var domVer   = document.getElementById('vernum');
 var domMul   = document.getElementById('mul');
 var domAim   = document.getElementById('aim');
 var domBnc   = document.getElementById('bnc');
