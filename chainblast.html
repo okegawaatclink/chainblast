@@ -113,6 +113,9 @@ var BR        = 6;                               // bullet radius
 var AIM_STEPS   = 10;                            // エイムガイドラインのステップ数
 var MAX_BOUNCES  = 3;                            // 弾の最大反射回数
 var EXPL_R_MULT  = 2.15;                         // 誘爆範囲倍率（敵半径 × この値）
+var OIL_R        = 40;                           // オイル付与半径
+var OIL_MAX      = 4;                            // オイル最大スタック数
+var OIL_BOOST    = 12;                           // スタックごとの誘爆範囲増加
 var ENEMY_MARGIN = 28;
 var ENEMY_SPACING = 44;
 
@@ -169,8 +172,8 @@ function makeEnemy(x, row, type) {
     st:'n',
     ignT:0, xplT:0, lv:0,
     pt: Math.random()*6.28,
-    hitCool:0,
-    blinkT:0,
+    hitCool:0, oilCool:0,
+    blinkT:0, oil:0,
   };
 }
 
@@ -505,13 +508,13 @@ function doExplode(en) {
   if (chainCnt>=5) shakeT=0.25;
   addExplosion(en.x,en.y,en.lv,en.type);
 
+  var effExplR = en.explR + en.oil * OIL_BOOST;
   for (var i=0; i<enemies.length; i++) {
     var o=enemies[i];
     if (o===en||o.st==='x'||o.st==='d') continue;
-    if (dst(en.x,en.y,o.x,o.y) > en.explR+o.r) continue;
+    if (dst(en.x,en.y,o.x,o.y) > effExplR+o.r) continue;
     if (o.st==='i') { o.ignT=0.03; }
     else {
-      // 爆発に巻き込まれると残HPに関係なく点火
       o.st='i'; o.lv=en.lv+1;
       o.ignT=0.25*Math.pow(0.9,o.lv);
     }
@@ -520,7 +523,7 @@ function doExplode(en) {
   for (var i=0; i<items.length; i++) {
     var it=items[i];
     if (it.st!=='n') continue;
-    if (dst(en.x,en.y,it.x,it.y) <= en.explR+it.r) destroyItem(it);
+    if (dst(en.x,en.y,it.x,it.y) <= effExplR+it.r) destroyItem(it);
   }
 }
 
@@ -610,14 +613,18 @@ function update(dt) {
       for (var i=0; i<enemies.length; i++) {
         var en=enemies[i];
         if (en.st==='d'||en.st==='x') continue;
-        if (en.hitCool>0) continue;
-        if (dst(bul.x,bul.y,en.x,en.y)<bul.r+en.r) {
+        var bd=dst(bul.x,bul.y,en.x,en.y);
+        if (en.hitCool<=0 && bd<bul.r+en.r) {
           hitEnemy(en);
           en.hitCool=0.15;
           var nx=bul.x-en.x,ny=bul.y-en.y,nd=Math.hypot(nx,ny)||1;
           nx/=nd;ny/=nd;
           var dot=bul.vx*nx+bul.vy*ny;
           bul.vx-=2*dot*nx; bul.vy-=2*dot*ny;
+        } else if (en.oilCool<=0 && bd<OIL_R) {
+          // 直撃せず近くを通過したらオイル付与
+          en.oil = Math.min(en.oil+1, OIL_MAX);
+          en.oilCool = 0.25;
         }
       }
       if (Math.hypot(bul.vx,bul.vy)<0.4) bul=null;
@@ -630,6 +637,7 @@ function update(dt) {
     var en=enemies[i];
     en.pt+=dt*3.5;
     if (en.hitCool>0) en.hitCool-=dt;
+    if (en.oilCool>0) en.oilCool-=dt;
     if (en.blinkT>0) en.blinkT-=dt;
     if (en.st==='i') { en.ignT-=dt; if(en.ignT<=0) doExplode(en); }
     if (en.st==='x') { en.xplT-=dt; if(en.xplT<=0) en.st='d'; }
@@ -672,7 +680,7 @@ function applyEffect(id, x, y) {
     txt = '誘爆範囲 +0.1';
   } else {
     scoreMul = Math.round((scoreMul + 0.2) * 10) / 10;
-    txt = '倍率 +0.2';
+    txt = 'スコア倍率 +0.2';
   }
   updateHUD();
   floatTexts.push({x:x, y:y-20, text:txt, life:1});
@@ -882,6 +890,29 @@ function drawEnemyLarge(en) {
   CX.restore();
 }
 
+// オイルオーバーレイ
+function drawOilOverlay(en) {
+  if (en.oil<=0) return;
+  var alpha = en.oil / OIL_MAX;
+  CX.save();
+  // ぬめり光
+  CX.globalAlpha = alpha * 0.45;
+  CX.shadowColor = '#f80'; CX.shadowBlur = 10;
+  CX.fillStyle = '#c05000';
+  CX.beginPath(); CX.arc(0,0,en.r+3,0,Math.PI*2); CX.fill();
+  // オイル滴（スタック数分の点）
+  CX.globalAlpha = 0.9;
+  CX.shadowBlur = 0;
+  for (var k=0;k<en.oil;k++) {
+    var a = k/OIL_MAX*Math.PI*2 - Math.PI/2;
+    CX.fillStyle = k===en.oil-1 ? '#ffa030' : '#c06000';
+    CX.beginPath();
+    CX.arc(Math.cos(a)*(en.r-3), Math.sin(a)*(en.r-3), 3.5, 0, Math.PI*2);
+    CX.fill();
+  }
+  CX.globalAlpha=1; CX.restore();
+}
+
 // 点火中オーバーレイ
 function drawIgniteOverlay(en) {
   var pulse=1+Math.sin(en.pt*4)*0.2;
@@ -1056,6 +1087,8 @@ function draw() {
       else if (en.type==='m') drawEnemyMedium(en);
       else drawEnemyLarge(en);
 
+      // オイルオーバーレイ
+      if (en.oil>0) drawOilOverlay(en);
       // 点火オーバーレイ
       if (en.st==='i') drawIgniteOverlay(en);
     }
