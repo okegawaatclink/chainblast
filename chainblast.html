@@ -76,6 +76,9 @@ var mouse = { x: W/2, y: LY-60, dn: false };
 var playerAnim = { shotT: 0, shooting: false };
 var playerImg = new Image();
 playerImg.src = 'player.png';
+var selectOptions = null;
+var selectRects = null;
+var prevPhase = null;
 
 // ================================================================
 //  HELPERS
@@ -103,10 +106,9 @@ function makeEnemy(x, row, type) {
   };
 }
 
-var ITEM_BUFFS = ['aim', 'bounce', 'explr'];
+var ITEM_EFFECTS = ['aim', 'bounce', 'explr', 'score'];
 function makeItem(x, row) {
-  var buff = ITEM_BUFFS[Math.floor(Math.random()*3)];
-  return { x:x, y:rowY(row), row:row, r:13, st:'n', buff:buff, xplT:0, pt:Math.random()*6.28 };
+  return { x:x, y:rowY(row), row:row, r:13, st:'n', xplT:0, pt:Math.random()*6.28, ttl:3 };
 }
 
 // ================================================================
@@ -117,6 +119,7 @@ function init() {
   score=0; wave=0; chainCnt=0; shakeT=0;
   AIM_STEPS=10; MAX_BOUNCES=3; EXPL_R_MULT=2.15;
   dropT=0; dropList=[];
+  selectOptions=null; selectRects=null; prevPhase=null;
   domChain.textContent='';
   setMsg(''); updateHUD();
   nextWave();
@@ -211,6 +214,14 @@ function endTurn() {
     if (enemies[i].st!=='d') alive.push(enemies[i]);
   }
   enemies=alive;
+  // アイテム寿命を消費（未取得のみ）
+  for (var i=0; i<items.length; i++) {
+    var it=items[i];
+    if (it.st==='n') {
+      it.ttl--;
+      if (it.ttl<=0) it.st='d';
+    }
+  }
   var aliveItems=[];
   for (var i=0; i<items.length; i++) {
     if (items[i].st!=='d') aliveItems.push(items[i]);
@@ -229,6 +240,10 @@ function endTurn() {
 CV.addEventListener('mousedown', function(ev) {
   var r=CV.getBoundingClientRect();
   mouse.x=ev.clientX-r.left; mouse.y=ev.clientY-r.top;
+  if (phase==='select') {
+    handleSelectClick(mouse.x, mouse.y);
+    return;
+  }
   if (phase==='aim') mouse.dn=true;
   if (phase==='over'||phase==='clear') init();
 });
@@ -327,18 +342,7 @@ function destroyItem(it) {
   if (it.st!=='n') return;
   it.st='x'; it.xplT=0.5;
   addExplosion(it.x, it.y, 0, 'item');
-  var txt;
-  if (it.buff==='aim') {
-    AIM_STEPS += 5;
-    txt = 'AIM GUIDE +5';
-  } else if (it.buff==='bounce') {
-    MAX_BOUNCES += 1;
-    txt = 'BOUNCE +1';
-  } else {
-    EXPL_R_MULT = Math.round((EXPL_R_MULT + 0.1) * 100) / 100;
-    txt = 'BLAST RANGE +0.1';
-  }
-  floatTexts.push({x:it.x, y:it.y-20, text:txt, life:1});
+  openSelectWindow(it.x, it.y);
 }
 
 function anyActive() {
@@ -380,7 +384,7 @@ function update(dt) {
     floatTexts[i].life -= dt*0.8;
     if (floatTexts[i].life<=0) floatTexts.splice(i,1);
   }
-  if (phase==='over'||phase==='clear') return;
+  if (phase==='over'||phase==='clear'||phase==='select') return;
 
   // DROP
   if (phase==='drop') {
@@ -449,6 +453,51 @@ function update(dt) {
   // CHAIN end
   if (phase==='chain') {
     if (!anyActive()) endTurn();
+  }
+}
+
+function openSelectWindow(x, y) {
+  // pick 2 distinct effects
+  var a = ITEM_EFFECTS[Math.floor(Math.random()*ITEM_EFFECTS.length)];
+  var b;
+  do { b = ITEM_EFFECTS[Math.floor(Math.random()*ITEM_EFFECTS.length)]; } while (b===a);
+  selectOptions = [a, b];
+  selectRects = null;
+  prevPhase = phase;
+  phase = 'select';
+}
+
+function applyEffect(id, x, y) {
+  var txt;
+  if (id==='aim') {
+    AIM_STEPS += 5;
+    txt = 'ガイド延長 +5';
+  } else if (id==='bounce') {
+    MAX_BOUNCES += 1;
+    txt = '反射回数 +1';
+  } else if (id==='explr') {
+    EXPL_R_MULT = Math.round((EXPL_R_MULT + 0.1) * 100) / 100;
+    txt = '誘爆範囲 +0.1';
+  } else {
+    score += 500;
+    if (score>bestScore) bestScore=score;
+    updateHUD();
+    txt = 'スコア +500';
+  }
+  floatTexts.push({x:x, y:y-20, text:txt, life:1});
+}
+
+function handleSelectClick(mx, my) {
+  if (!selectRects || !selectOptions) return;
+  for (var i=0; i<selectRects.length; i++) {
+    var r = selectRects[i];
+    if (mx>=r.x && mx<=r.x+r.w && my>=r.y && my<=r.y+r.h) {
+      applyEffect(selectOptions[i], W/2, H/2);
+      selectOptions=null; selectRects=null;
+      if (bul) phase='bullet';
+      else phase='chain';
+      return;
+    }
   }
 }
 
@@ -676,7 +725,7 @@ function drawExploding(en) {
 //  DRAW ITEM
 // ================================================================
 function drawItem(it) {
-  var col = it.buff==='aim'?'#4af': it.buff==='bounce'?'#ff4':'#f80';
+  var col = '#ff0';
   var pulse = 1 + Math.sin(it.pt*2)*0.1;
   var rot   = it.pt * 0.5;
   CX.save(); CX.translate(it.x, it.y);
@@ -716,8 +765,7 @@ function drawItem(it) {
   CX.rotate(-rot);
   CX.scale(1/pulse, 1/pulse);
   CX.fillStyle='#fff'; CX.font='bold 7px monospace'; CX.textAlign='center';
-  var lbl = it.buff==='aim'?'AIM': it.buff==='bounce'?'+BNC':'EXP';
-  CX.fillText(lbl, 0, 3);
+  CX.fillText('ITEM', 0, 3);
 
   CX.restore();
 }
@@ -937,6 +985,43 @@ function draw() {
     CX.fillText('ALL '+MAX_WAVE+' WAVES CLEARED',W/2,H/2+36);
     CX.fillStyle='#555'; CX.font='12px monospace';
     CX.fillText('クリックでリスタート',W/2,H/2+62);
+  }
+
+  // SELECT WINDOW
+  if (phase==='select' && selectOptions) {
+    CX.fillStyle='rgba(0,0,0,0.78)'; CX.fillRect(0,0,W,H);
+    CX.textAlign='center';
+    CX.fillStyle='#ff0'; CX.font='bold 20px monospace';
+    CX.fillText('CHOOSE ONE', W/2, H/2-90);
+
+    var cardW=180, cardH=90, gap=24;
+    var leftX=W/2-cardW-gap/2, rightX=W/2+gap/2;
+    var y=H/2-40;
+    var rects=[
+      {x:leftX, y:y, w:cardW, h:cardH},
+      {x:rightX, y:y, w:cardW, h:cardH}
+    ];
+    selectRects = rects;
+
+    for (var i=0;i<2;i++) {
+      var id=selectOptions[i];
+      var title = id==='aim'?'AIM GUIDE +5'
+                : id==='bounce'?'BOUNCE +1'
+                : id==='explr'?'BLAST RANGE +0.1'
+                : 'SCORE +500';
+      var sub = id==='aim'?'ガイドライン延長'
+              : id==='bounce'?'反射回数増加'
+              : id==='explr'?'誘爆範囲拡大'
+              : 'スコア加算';
+      CX.fillStyle='rgba(20,20,30,0.9)'; CX.fillRect(rects[i].x, rects[i].y, rects[i].w, rects[i].h);
+      CX.strokeStyle='#ff0'; CX.lineWidth=2; CX.strokeRect(rects[i].x, rects[i].y, rects[i].w, rects[i].h);
+      CX.fillStyle='#fff'; CX.font='bold 14px monospace';
+      CX.fillText(title, rects[i].x+rects[i].w/2, rects[i].y+36);
+      CX.fillStyle='rgba(255,255,255,0.6)'; CX.font='11px monospace';
+      CX.fillText(sub, rects[i].x+rects[i].w/2, rects[i].y+60);
+    }
+    CX.fillStyle='rgba(255,255,255,0.4)'; CX.font='11px monospace';
+    CX.fillText('クリックで選択', W/2, H/2+70);
   }
 
   CX.restore();
