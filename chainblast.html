@@ -146,11 +146,12 @@ var curBounces, penaltyNextTurn=false, penaltyActive=false, turnKills=0;
 // プレイヤーキャラアニメ
 var playerAnim = { shotT: 0, shooting: false };
 var playerImg = new Image();
-playerImg.src = 'player.png';
+playerImg.src = 'asset/p2.png';
 var selectOptions = null;
 var selectRects = null;
 var prevPhase = null;
 var pendingSelects = 0;
+var pendingFullClear = false;
 var shotType = 'fire'; // 'fire' | 'oil'
 
 // ================================================================
@@ -198,7 +199,7 @@ function init() {
   AIM_STEPS=10; MAX_BOUNCES=3; EXPL_R_MULT=2.15;
   curBounces=MAX_BOUNCES; penaltyNextTurn=false; penaltyActive=false; turnKills=0;
   dropT=0; dropList=[];
-  selectOptions=null; selectRects=null; prevPhase=null; pendingSelects=0;
+  selectOptions=null; selectRects=null; prevPhase=null; pendingSelects=0; pendingFullClear=false;
   shotType='fire';
   domChain.textContent='';
   setMsg(''); updateHUD();
@@ -240,6 +241,10 @@ function randomXPositions(n) {
 }
 
 function nextWave() {
+  if (pendingFullClear) {
+    pendingFullClear = false;
+    floatTexts.push({x:W/2, y:H/2-60, text:'全消し！ ×2', life:1.8});
+  }
   wave++; chainCnt=0;
   domChain.textContent='';
 
@@ -318,13 +323,13 @@ function endTurn() {
   }
   items=aliveItems;
   if (turnKills===0) penaltyNextTurn=true;
-  // 全消しボーナス：フィールドの敵が0ならスコア2倍
+  // 全消しボーナス：フィールドの敵が0ならスコア2倍（表示はアイテム選択後）
   if (alive.length===0 && turnKills>0) {
     var bonus = score - turnStartScore;
     score += bonus;
     if (score>bestScore) bestScore=score;
     updateHUD();
-    floatTexts.push({x:W/2, y:H/2, text:'全消し！ ×2', life:1.4});
+    pendingFullClear = true;
     shakeT=0.3;
   }
   if (checkGameOver()) {
@@ -753,13 +758,11 @@ function handleSelectClick(mx, my) {
 // ================================================================
 
 // プレイヤーキャラ
-var PLAYER_W = 56, PLAYER_H = 56;
+var PLAYER_W = 112, PLAYER_H = 112;
 function drawPlayer(cx, cy) {
   var shooting = playerAnim.shooting;
-  var lean = shooting ? -8 : 0;
-
   CX.save();
-  CX.translate(cx + lean, cy);
+  CX.translate(cx, cy);
 
   // 影
   CX.fillStyle='rgba(0,0,0,0.3)';
@@ -1206,7 +1209,7 @@ function draw() {
   }
 
   // プレイヤーキャラ
-  drawPlayer(LX, LY);
+  drawPlayer(LX, FLOOR_Y + PLAYER_H/2 - 20);
 
   // フェーズラベル
   var lbl={drop:'↓ DROP',aim:'► AIM',bullet:'◉ SHOT',chain:'💥 CHAIN'};
