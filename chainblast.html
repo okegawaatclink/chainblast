@@ -146,13 +146,30 @@ var curBounces, penaltyNextTurn=false, penaltyActive=false, turnKills=0;
 // プレイヤーキャラアニメ
 var playerAnim = { shotT: 0, shooting: false };
 var playerImg = new Image();
-playerImg.src = 'asset/p2.png';
+var CHAR_LIST = [
+  { name:'CHAR 01', selectSrc:'asset/image/1.png', playSrc:'asset/ball/1.png', accent:'#7dd' },
+  { name:'CHAR 02', selectSrc:'asset/image/2.png', playSrc:'asset/ball/2.png', accent:'#f7a' }
+];
+var charSelectImgs = [];
+for (var ci=0; ci<CHAR_LIST.length; ci++) {
+  var im = new Image();
+  im.src = CHAR_LIST[ci].selectSrc;
+  charSelectImgs.push(im);
+}
+var selectedChar = 0;
+function setPlayerChar(idx) {
+  selectedChar = Math.max(0, Math.min(idx, CHAR_LIST.length-1));
+  playerImg.src = CHAR_LIST[selectedChar].playSrc;
+}
+setPlayerChar(0);
 var selectOptions = null;
 var selectRects = null;
 var prevPhase = null;
 var pendingSelects = 0;
 var pendingFullClear = false;
 var shotType = 'fire'; // 'fire' | 'oil'
+var titleRects = null;
+var titleStartRect = null;
 
 // ================================================================
 //  HELPERS
@@ -193,7 +210,7 @@ function makeItem(x, row) {
 // ================================================================
 //  INIT
 // ================================================================
-function init() {
+function resetGameState() {
   enemies=[]; items=[]; sparks=[]; floatTexts=[]; bul=null;
   score=0; wave=0; chainCnt=0; shakeT=0; scoreMul=1.0;
   AIM_STEPS=10; MAX_BOUNCES=3; EXPL_R_MULT=2.15;
@@ -204,7 +221,16 @@ function init() {
   domChain.textContent='';
   setMsg(''); updateHUD();
   resizeCanvasToFit();
+}
+
+function startGame() {
+  resetGameState();
   nextWave();
+}
+
+function startTitle() {
+  resetGameState();
+  phase = 'title';
 }
 
 // ================================================================
@@ -352,6 +378,10 @@ CV.addEventListener('mousedown', function(ev) {
   if (usePointer) return;
   var p=getPos(ev);
   mouse.x=p.x; mouse.y=p.y;
+  if (phase==='title') {
+    handleTitleClick(mouse.x, mouse.y);
+    return;
+  }
   if (phase==='select') {
     handleSelectClick(mouse.x, mouse.y);
     return;
@@ -361,7 +391,7 @@ CV.addEventListener('mousedown', function(ev) {
     mouse.dn=true;
     mouse.sx=mouse.x; mouse.sy=mouse.y; mouse.hasStart=true;
   }
-  if (phase==='over'||phase==='clear') init();
+  if (phase==='over'||phase==='clear') startTitle();
 });
 CV.addEventListener('mousemove', function(ev) {
   if (usePointer) return;
@@ -393,6 +423,10 @@ CV.addEventListener('touchstart', function(ev) {
   activeTouchId = ev.touches[0].identifier;
   var p=getTouchPos(ev, activeTouchId) || getPos(ev);
   mouse.x=p.x; mouse.y=p.y;
+  if (phase==='title') {
+    handleTitleClick(mouse.x, mouse.y);
+    return;
+  }
   if (phase==='select') {
     handleSelectClick(mouse.x, mouse.y);
     return;
@@ -402,7 +436,7 @@ CV.addEventListener('touchstart', function(ev) {
     mouse.dn=true;
     mouse.sx=mouse.x; mouse.sy=mouse.y; mouse.hasStart=true;
   }
-  if (phase==='over'||phase==='clear') init();
+  if (phase==='over'||phase==='clear') startTitle();
 }, { passive:false });
 CV.addEventListener('touchmove', function(ev) {
   if (usePointer) return;
@@ -444,6 +478,10 @@ if (usePointer) {
     activePointerId = ev.pointerId;
     var p=getPos(ev);
     mouse.x=p.x; mouse.y=p.y;
+    if (phase==='title') {
+      handleTitleClick(mouse.x, mouse.y);
+      return;
+    }
     if (phase==='select') {
       handleSelectClick(mouse.x, mouse.y);
       return;
@@ -453,7 +491,7 @@ if (usePointer) {
       mouse.dn=true;
       mouse.sx=mouse.x; mouse.sy=mouse.y; mouse.hasStart=true;
     }
-    if (phase==='over'||phase==='clear') init();
+    if (phase==='over'||phase==='clear') startTitle();
   });
   CV.addEventListener('pointermove', function(ev) {
     ev.preventDefault();
@@ -605,6 +643,7 @@ function update(dt) {
     floatTexts[i].life -= dt*0.8;
     if (floatTexts[i].life<=0) floatTexts.splice(i,1);
   }
+  if (phase==='title') return;
   if (phase==='over'||phase==='clear'||phase==='select') return;
 
   // DROP
@@ -753,11 +792,31 @@ function handleSelectClick(mx, my) {
   }
 }
 
+function handleTitleClick(mx, my) {
+  if (titleRects) {
+    for (var i=0; i<titleRects.length; i++) {
+      var r = titleRects[i];
+      if (mx>=r.x && mx<=r.x+r.w && my>=r.y && my<=r.y+r.h) {
+        setPlayerChar(r.idx);
+        return true;
+      }
+    }
+  }
+  if (titleStartRect) {
+    var b = titleStartRect;
+    if (mx>=b.x && mx<=b.x+b.w && my>=b.y && my<=b.y+b.h) {
+      startGame();
+      return true;
+    }
+  }
+  return false;
+}
+
 // ================================================================
 //  DRAW CHARACTERS
 // ================================================================
 
-// プレイヤーキャラ
+// プレイヤーキャラ（ゲーム内ボールは正方形）
 var PLAYER_W = 112, PLAYER_H = 112;
 function drawPlayer(cx, cy) {
   var shooting = playerAnim.shooting;
@@ -1070,6 +1129,49 @@ function drawBullet(b) {
 // ================================================================
 //  MAIN DRAW
 // ================================================================
+function drawTitle() {
+  CX.fillStyle='rgba(0,0,0,0.78)'; CX.fillRect(0,0,W,H);
+  CX.textAlign='center';
+  var glow=0.6+Math.sin(Date.now()/320)*0.4;
+  CX.shadowColor='#ff8a20'; CX.shadowBlur=22*glow;
+  CX.fillStyle='#ffb020'; CX.font='bold 30px monospace';
+  CX.fillText('CHAIN BLAST', W/2, 92);
+  CX.shadowBlur=0;
+  CX.fillStyle='rgba(255,255,255,0.7)'; CX.font='12px monospace';
+  CX.fillText('キャラを選んでスタート', W/2, 118);
+
+  var cardW=120, cardH=170, gap=18;
+  var totalW=cardW*CHAR_LIST.length + gap*(CHAR_LIST.length-1);
+  var startX=W/2 - totalW/2;
+  var y=H/2 - 60;
+  titleRects=[];
+  for (var i=0; i<CHAR_LIST.length; i++) {
+    var x=startX + i*(cardW+gap);
+    var sel = i===selectedChar;
+    titleRects.push({x:x, y:y, w:cardW, h:cardH, idx:i});
+    CX.fillStyle= sel ? 'rgba(40,40,60,0.95)' : 'rgba(20,20,30,0.9)';
+    CX.fillRect(x,y,cardW,cardH);
+    CX.strokeStyle = sel ? CHAR_LIST[i].accent : 'rgba(255,255,255,0.2)';
+    CX.lineWidth=2; CX.strokeRect(x,y,cardW,cardH);
+    var img=charSelectImgs[i];
+    if (img && img.complete && img.naturalWidth) {
+      var iw=80, ih=Math.round(iw*1.5);
+      CX.drawImage(img, x+cardW/2-iw/2, y+20, iw, ih);
+    }
+    CX.fillStyle='#fff'; CX.font='bold 12px monospace';
+    CX.fillText(CHAR_LIST[i].name, x+cardW/2, y+cardH-14);
+  }
+
+  var bw=180, bh=32, bx=W/2-bw/2, by=H-120;
+  titleStartRect = {x:bx, y:by, w:bw, h:bh};
+  CX.fillStyle='rgba(255,140,0,0.85)'; CX.fillRect(bx,by,bw,bh);
+  CX.strokeStyle='rgba(255,255,255,0.5)'; CX.lineWidth=1.5; CX.strokeRect(bx,by,bw,bh);
+  CX.fillStyle='#fff'; CX.font='bold 14px monospace';
+  CX.fillText('START', W/2, by+21);
+  CX.fillStyle='rgba(255,255,255,0.5)'; CX.font='11px monospace';
+  CX.fillText('クリックで選択 / START', W/2, by+52);
+}
+
 function draw() {
   CX.save();
   if (shakeT>0) CX.translate((Math.random()-0.5)*shakeT*12,(Math.random()-0.5)*shakeT*12);
@@ -1107,6 +1209,12 @@ function draw() {
   var gndGrd=CX.createLinearGradient(0,flY,0,H);
   gndGrd.addColorStop(0,'#1a1a2a'); gndGrd.addColorStop(1,'#0d0d18');
   CX.fillStyle=gndGrd; CX.fillRect(0,flY,W,H-flY);
+
+  if (phase==='title') {
+    drawTitle();
+    CX.restore();
+    return;
+  }
 
   // sparks
   for (var i=0;i<sparks.length;i++) {
@@ -1319,7 +1427,7 @@ function draw() {
 // ================================================================
 //  START
 // ================================================================
-init();
+startTitle();
 </script>
 </body>
 </html>
