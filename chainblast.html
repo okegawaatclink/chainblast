@@ -107,7 +107,7 @@ var MAX_ROWS  = Math.floor((FLOOR_Y - 30) / ROW_H);
 var FLOOR_ROW = MAX_ROWS - 1;
 var LX        = W / 2;
 var LY        = H - 38;                          // launcher center Y
-var DROP_SEC  = 0.42;
+var DROP_SEC  = 0.33;
 var MAX_WAVE  = 20;
 var BR        = 6;                               // bullet radius
 var AIM_STEPS   = 10;                            // エイムガイドラインのステップ数
@@ -142,10 +142,23 @@ var score, bestScore = 0, wave, chainCnt, shakeT, turnStartScore;
 var scoreMul;
 var dropT, dropList;
 var mouse = { x: W/2, y: LY-60, dn: false, sx: W/2, sy: LY-60, hasStart:false };
-var curBounces, penaltyNextTurn=false, penaltyActive=false, turnKills=0;
+var curBounces, penaltyNextTurn=false, turnKills=0;
+var waveGoal=0, waveGoalT=0, waveGoalAchieved=false;
+var goalScoreTarget=0, goalChainTarget=0, goalMsgT=0, totalChains=0;
+var lastWaveChains=0;
 // プレイヤーキャラアニメ
 var playerAnim = { shotT: 0, shooting: false };
 var playerImg = new Image();
+var enemyImgs = {
+  s: new Image(),
+  m: new Image(),
+  l: new Image()
+};
+enemyImgs.s.src = 'asset/enemy/1.png';
+enemyImgs.m.src = 'asset/enemy/2.png';
+enemyImgs.l.src = 'asset/enemy/3.png';
+var itemImg = new Image();
+itemImg.src = 'asset/enemy/item.png';
 var CHAR_LIST = [
   { name:'CHAR 01', selectSrc:'asset/image/1.png', playSrc:'asset/ball/1.png', accent:'#7dd' },
   { name:'CHAR 02', selectSrc:'asset/image/2.png', playSrc:'asset/ball/2.png', accent:'#f7a' }
@@ -198,7 +211,7 @@ function makeEnemy(x, row, type) {
     ignT:0, xplT:0, lv:0,
     pt: Math.random()*6.28,
     hitCool:0, oilCool:0,
-    blinkT:0, oil:0,
+    blinkT:0, oil:0, bonus:0,
   };
 }
 
@@ -214,10 +227,13 @@ function resetGameState() {
   enemies=[]; items=[]; sparks=[]; floatTexts=[]; bul=null;
   score=0; wave=0; chainCnt=0; shakeT=0; scoreMul=1.0;
   AIM_STEPS=10; MAX_BOUNCES=3; EXPL_R_MULT=2.15;
-  curBounces=MAX_BOUNCES; penaltyNextTurn=false; penaltyActive=false; turnKills=0;
+  curBounces=MAX_BOUNCES; penaltyNextTurn=false; turnKills=0;
   dropT=0; dropList=[];
   selectOptions=null; selectRects=null; prevPhase=null; pendingSelects=0; pendingFullClear=false;
   shotType='fire';
+  waveGoal=0; waveGoalT=0; waveGoalAchieved=false;
+  goalScoreTarget=0; goalChainTarget=0; goalMsgT=0; totalChains=0;
+  lastWaveChains=0;
   domChain.textContent='';
   setMsg(''); updateHUD();
   resizeCanvasToFit();
@@ -225,6 +241,11 @@ function resetGameState() {
 
 function startGame() {
   resetGameState();
+  var scoreOpts=[15000,20000,25000];
+  var chainOpts=[15,20,25];
+  goalScoreTarget = scoreOpts[Math.floor(Math.random()*scoreOpts.length)];
+  goalChainTarget = chainOpts[Math.floor(Math.random()*chainOpts.length)];
+  goalMsgT = 2.6;
   nextWave();
 }
 
@@ -241,7 +262,9 @@ function maxSpawnSlots() {
 }
 function enemyCount(w) {
   var maxEnemies = Math.max(1, maxSpawnSlots() - 1); // leave 1 slot for item
-  return Math.min(2+w, maxEnemies);
+  var base = Math.min(2+w, maxEnemies);
+  var bonus = Math.floor(Math.min(lastWaveChains, 8) / 3); // 0-2
+  return Math.min(base + bonus, maxEnemies);
 }
 
 function pickType(w) {
@@ -281,6 +304,10 @@ function nextWave() {
   }
 
   var n  = enemyCount(wave);
+  if (penaltyNextTurn) { n = 1; penaltyNextTurn = false; }
+  waveGoal = 0;
+  waveGoalT = 0;
+  waveGoalAchieved = false;
   var dl = [];
 
   // 既存の敵・アイテムを1行下へ
@@ -348,6 +375,7 @@ function endTurn() {
     if (items[i].st!=='d') aliveItems.push(items[i]);
   }
   items=aliveItems;
+  lastWaveChains = chainCnt;
   if (turnKills===0) penaltyNextTurn=true;
   // 全消しボーナス：フィールドの敵が0ならスコア2倍（表示はアイテム選択後）
   if (alive.length===0 && turnKills>0) {
@@ -557,24 +585,12 @@ function hitEnemy(en) {
   var dmg = (bul && bul.atkPow) ? bul.atkPow : 1;
   en.hp = Math.max(0, en.hp - dmg);
   if (en.hp <= 0) {
-    if (en.st==='n') { en.st='i'; en.ignT=0.25; }
+    if (en.st==='n') { en.st='i'; en.ignT=0.25; en.bonus = (wave<=2) ? 1 : 0; }
     else if (en.st==='i') { doExplode(en); }
   }
 }
 
-function doExplode(en) {
-  if (en.st==='x'||en.st==='d') return;
-  en.st='x'; en.xplT=0.42;
-  turnKills++;
-  chainCnt++;
-  score+=Math.floor(10*Math.pow(chainCnt,1.3)*scoreMul);
-  if (score>bestScore) bestScore=score;
-  updateHUD();
-  domChain.textContent=chainCnt+' CHAIN';
-  domChain.style.color=chainCnt>=8?'#f00':chainCnt>=5?'#f70':'#fb0';
-  if (chainCnt>=5) shakeT=0.25;
-  addExplosion(en.x,en.y,en.lv,en.type);
-
+function applyExplosionEffects(en) {
   var effExplR = en.explR + en.oil * OIL_BOOST;
   for (var i=0; i<enemies.length; i++) {
     var o=enemies[i];
@@ -584,7 +600,7 @@ function doExplode(en) {
     o.blinkT = 0.12;
     if (o.hp <= 0) {
       if (o.st==='i') { o.ignT=0.03; }
-      else { o.st='i'; o.lv=en.lv+1; o.ignT=0.25*Math.pow(0.9,o.lv); }
+      else { o.st='i'; o.lv=en.lv+1; o.ignT=0.25*Math.pow(0.9,o.lv); o.bonus = (wave<=2) ? 1 : 0; }
     } else if (o.st==='i') {
       o.ignT=0.03; // 既に点火済みなら即爆発
     }
@@ -594,6 +610,27 @@ function doExplode(en) {
     var it=items[i];
     if (it.st!=='n') continue;
     if (dst(en.x,en.y,it.x,it.y) <= effExplR+it.r) destroyItem(it);
+  }
+}
+
+function doExplode(en) {
+  if (en.st==='x'||en.st==='d') return;
+  en.st='x'; en.xplT=0.42;
+  turnKills++;
+  chainCnt++;
+  totalChains++;
+  score+=Math.floor(10*Math.pow(chainCnt,1.3)*scoreMul);
+  if (score>bestScore) bestScore=score;
+  updateHUD();
+  domChain.textContent=chainCnt+' CHAIN';
+  domChain.style.color=chainCnt>=8?'#f00':chainCnt>=5?'#f70':'#fb0';
+  if (chainCnt>=5) shakeT=0.25;
+  addExplosion(en.x,en.y,en.lv,en.type);
+  applyExplosionEffects(en);
+  if (en.bonus>0 && wave<=2) {
+    en.bonus=0;
+    addExplosion(en.x,en.y,en.lv,en.type);
+    applyExplosionEffects(en);
   }
 }
 
@@ -643,6 +680,8 @@ function update(dt) {
     floatTexts[i].life -= dt*0.8;
     if (floatTexts[i].life<=0) floatTexts.splice(i,1);
   }
+  if (goalMsgT>0) goalMsgT-=dt;
+  if (waveGoalT>0) waveGoalT-=dt;
   if (phase==='title') return;
   if (phase==='over'||phase==='clear'||phase==='select') return;
 
@@ -662,9 +701,7 @@ function update(dt) {
       }
       dropList=[];
       if (checkGameOver()) { if(score>bestScore)bestScore=score; updateHUD(); phase='over'; return; }
-      penaltyActive = penaltyNextTurn;
-      curBounces = penaltyActive ? 1 : MAX_BOUNCES;
-      penaltyNextTurn = false;
+      curBounces = MAX_BOUNCES;
       turnKills = 0;
       turnStartScore = score;
       updateHUD();
@@ -702,6 +739,13 @@ function update(dt) {
           // オイル弾が近くを通過
           en.oil = Math.min(en.oil+1, OIL_MAX);
           en.oilCool = 0.25;
+        }
+      }
+      for (var i=0; i<items.length; i++) {
+        var it=items[i];
+        if (it.st!=='n') continue;
+        if (dst(bul.x,bul.y,it.x,it.y) <= bul.r+it.r) {
+          destroyItem(it);
         }
       }
       if (Math.hypot(bul.vx,bul.vy)<0.4) bul=null;
@@ -746,15 +790,15 @@ function openSelectWindow(x, y) {
 function applyEffect(id, x, y) {
   var txt;
   if (id==='aim') {
-    AIM_STEPS += 5;
-    txt = 'ガイド延長 +5';
+    AIM_STEPS += 10;
+    txt = 'ガイド延長 +10';
   } else if (id==='bounce') {
-    MAX_BOUNCES += 1;
-    if (!penaltyActive) curBounces = MAX_BOUNCES;
-    txt = '反射回数 +1';
+    MAX_BOUNCES += 2;
+    curBounces = MAX_BOUNCES;
+    txt = '反射回数 +2';
   } else if (id==='explr') {
-    EXPL_R_MULT = Math.round((EXPL_R_MULT + 0.1) * 100) / 100;
-    txt = '誘爆範囲 +0.1';
+    EXPL_R_MULT = Math.round((EXPL_R_MULT + 0.2) * 100) / 100;
+    txt = '誘爆範囲 +0.2';
   } else {
     scoreMul = Math.round((scoreMul + 0.2) * 10) / 10;
     txt = 'スコア倍率 +0.2';
@@ -929,14 +973,6 @@ function drawEnemyMedium(en) {
   CX.beginPath(); CX.moveTo(-3,5); CX.lineTo(-2,10); CX.lineTo(-1,5); CX.closePath(); CX.fill();
   CX.beginPath(); CX.moveTo(1,5); CX.lineTo(2,10); CX.lineTo(3,5); CX.closePath(); CX.fill();
 
-  // HP残り表示
-  if (en.maxHp > 1) {
-    for (var h=0; h<en.maxHp; h++) {
-      CX.fillStyle = h < en.hp ? '#f80' : '#333';
-      CX.beginPath(); CX.arc(-6+h*6, r+8, 3, 0, Math.PI*2); CX.fill();
-    }
-  }
-
   CX.restore();
 }
 
@@ -989,15 +1025,21 @@ function drawEnemyLarge(en) {
     CX.beginPath(); CX.moveTo(tx,6); CX.lineTo(tx+2,13); CX.lineTo(tx+4,6); CX.closePath(); CX.fill();
   }
 
-  // HP残り表示
-  if (en.maxHp > 1) {
-    for (var h=0; h<en.maxHp; h++) {
-      CX.fillStyle = h < en.hp ? '#d0f' : '#333';
-      CX.beginPath(); CX.arc(-en.maxHp*5+h*10+5, r+10, 4, 0, Math.PI*2); CX.fill();
-    }
-  }
-
   CX.restore();
+}
+
+function drawEnemyHP(en) {
+  if (en.maxHp <= 1) return;
+  var dotR = Math.max(3, Math.round(en.r * 0.18));
+  var gap = dotR * 2;
+  var width = (en.maxHp - 1) * gap;
+  var startX = -width / 2;
+  var y = en.r + dotR - 6;
+  var liveCol = en.type==='l' ? '#d0f' : '#f80';
+  for (var h=0; h<en.maxHp; h++) {
+    CX.fillStyle = h < en.hp ? liveCol : '#333';
+    CX.beginPath(); CX.arc(startX + h*gap, y, dotR, 0, Math.PI*2); CX.fill();
+  }
 }
 
 // オイルオーバーレイ
@@ -1075,29 +1117,35 @@ function drawItem(it) {
   CX.rotate(rot);
   CX.scale(pulse, pulse);
 
-  // 外枠（直接攻撃無効の盾表現）
-  CX.shadowColor=col; CX.shadowBlur=12;
-  CX.strokeStyle=col; CX.lineWidth=2;
-  CX.beginPath(); CX.arc(0,0,it.r+3,0,Math.PI*2); CX.stroke();
+  if (itemImg.complete && itemImg.naturalWidth) {
+    // 画像
+    var sz = it.r * 2.2;
+    CX.drawImage(itemImg, -sz/2, -sz/2, sz, sz);
+  } else {
+    // 外枠（直接攻撃無効の盾表現）
+    CX.shadowColor=col; CX.shadowBlur=12;
+    CX.strokeStyle=col; CX.lineWidth=2;
+    CX.beginPath(); CX.arc(0,0,it.r+3,0,Math.PI*2); CX.stroke();
 
-  // ダイヤ形
-  CX.fillStyle=col;
-  CX.beginPath();
-  CX.moveTo(0,-11); CX.lineTo(9,0); CX.lineTo(0,11); CX.lineTo(-9,0);
-  CX.closePath(); CX.fill();
+    // ダイヤ形
+    CX.fillStyle=col;
+    CX.beginPath();
+    CX.moveTo(0,-11); CX.lineTo(9,0); CX.lineTo(0,11); CX.lineTo(-9,0);
+    CX.closePath(); CX.fill();
 
-  // ハイライト
-  CX.fillStyle='rgba(255,255,255,0.45)';
-  CX.beginPath();
-  CX.moveTo(0,-7); CX.lineTo(4,-1); CX.lineTo(0,2); CX.lineTo(-4,-1);
-  CX.closePath(); CX.fill();
+    // ハイライト
+    CX.fillStyle='rgba(255,255,255,0.45)';
+    CX.beginPath();
+    CX.moveTo(0,-7); CX.lineTo(4,-1); CX.lineTo(0,2); CX.lineTo(-4,-1);
+    CX.closePath(); CX.fill();
 
-  // ラベル（回転打ち消し）
-  CX.shadowBlur=0;
-  CX.rotate(-rot);
-  CX.scale(1/pulse, 1/pulse);
-  CX.fillStyle='#fff'; CX.font='bold 7px monospace'; CX.textAlign='center';
-  CX.fillText('ITEM', 0, 3);
+    // ラベル（回転打ち消し）
+    CX.shadowBlur=0;
+    CX.rotate(-rot);
+    CX.scale(1/pulse, 1/pulse);
+    CX.fillStyle='#fff'; CX.font='bold 7px monospace'; CX.textAlign='center';
+    CX.fillText('ITEM', 0, 3);
+  }
 
   CX.restore();
 }
@@ -1196,12 +1244,29 @@ function draw() {
 
   // ゲームオーバーライン
   var flY=rowY(FLOOR_ROW)+26;
+  var minDist=9999;
+  for (var i=0;i<enemies.length;i++) {
+    var en=enemies[i];
+    if (en.st==='d') continue;
+    var d = flY - en.y;
+    if (d < minDist) minDist = d;
+  }
+  var danger = clamp(1 - (minDist / (ROW_H*2.2)), 0, 1);
   CX.save();
-  var da=0.5+Math.sin(Date.now()/300)*0.3;
-  CX.strokeStyle='rgba(255,40,0,'+da+')'; CX.lineWidth=2; CX.setLineDash([8,5]);
+  var speed = 260 - 170*danger;
+  var da=0.25 + danger*0.6 + Math.sin(Date.now()/speed)*0.35;
+  CX.shadowColor='rgba(255,30,0,'+(0.55+danger*0.7)+')';
+  CX.shadowBlur=16 + danger*26;
+  CX.strokeStyle='rgba(255,30,0,'+da+')'; CX.lineWidth=2.5 + danger*2.2; CX.setLineDash([10,4]);
   CX.beginPath(); CX.moveTo(0,flY); CX.lineTo(W,flY); CX.stroke();
   CX.setLineDash([]);
-  CX.fillStyle='rgba(255,40,0,0.55)'; CX.font='10px monospace'; CX.textAlign='right';
+  // glow fill band
+  CX.globalAlpha = 0.15 + danger*0.25;
+  CX.fillStyle='rgba(255,20,0,1)';
+  CX.fillRect(0, flY-2, W, 4);
+  CX.globalAlpha = 1;
+  CX.shadowBlur=0;
+  CX.fillStyle='rgba(255,40,0,'+(0.55+danger*0.4)+')'; CX.font='10px monospace'; CX.textAlign='right';
   CX.fillText('GAME OVER LINE',W-6,flY-4);
   CX.restore();
 
@@ -1242,10 +1307,19 @@ function draw() {
       drawExploding(en);
     } else {
       // キャラ描画
-      if (en.type==='s') drawEnemySmall(en);
-      else if (en.type==='m') drawEnemyMedium(en);
-      else drawEnemyLarge(en);
+      var eimg = enemyImgs[en.type];
+      if (eimg && eimg.complete && eimg.naturalWidth) {
+        var sz = en.r * 2;
+        var bob = Math.sin(en.pt*2) * 2;
+        CX.drawImage(eimg, -sz/2, -sz/2 + bob, sz, sz);
+      } else {
+        if (en.type==='s') drawEnemySmall(en);
+        else if (en.type==='m') drawEnemyMedium(en);
+        else drawEnemyLarge(en);
+      }
 
+      // HP残り表示
+      drawEnemyHP(en);
       // オイルオーバーレイ
       if (en.oil>0) drawOilOverlay(en);
       // 点火オーバーレイ
@@ -1330,6 +1404,23 @@ function draw() {
   CX.fillStyle='rgba(255,120,0,0.12)'; CX.fillRect(0,0,bw,3);
   CX.fillStyle='rgba(255,120,0,0.45)'; CX.fillRect(0,0,bw,1);
 
+  // 開始時目標表示
+  if (goalMsgT>0) {
+    var a=Math.min(1, goalMsgT/2.6);
+    CX.save();
+    CX.globalAlpha=a;
+    CX.textAlign='center';
+    CX.fillStyle='rgba(0,0,0,0.55)';
+    CX.fillRect(W/2-120, 24, 240, 46);
+    CX.fillStyle='#fff'; CX.font='bold 12px monospace';
+    CX.fillText('GOAL: SCORE '+goalScoreTarget, W/2, 40);
+    CX.fillStyle='rgba(255,255,255,0.75)'; CX.font='11px monospace';
+    CX.fillText('TOTAL CHAIN '+goalChainTarget, W/2, 56);
+    CX.restore();
+  }
+
+  // Wave目標表示は削除
+
 
   // アイテム取得テキスト（最前面）
   if (floatTexts.length) {
@@ -1402,9 +1493,9 @@ function draw() {
 
     for (var i=0;i<2;i++) {
       var id=selectOptions[i];
-      var title = id==='aim'?'AIM GUIDE +5'
-                : id==='bounce'?'BOUNCE +1'
-                : id==='explr'?'BLAST RANGE +0.1'
+      var title = id==='aim'?'AIM GUIDE +10'
+                : id==='bounce'?'BOUNCE +2'
+                : id==='explr'?'BLAST RANGE +0.2'
                 : 'SCORE MULT +0.2';
       var sub = id==='aim'?'ガイドライン延長'
               : id==='bounce'?'反射回数増加'
