@@ -24,7 +24,7 @@ canvas { display:block; cursor:crosshair; border:1px solid #222; touch-action:no
 <body>
 <div id="chain"></div>
 <div id="hud">WAVE <span id="wv">01</span>/20&nbsp;SCORE<span id="sc">000000</span>&nbsp;BEST<span id="bst">000000</span></div>
-<div id="stats">x<span id="mul">1.0</span>&nbsp;AIM<span id="aim">10</span>&nbsp;BNC<span id="bnc">3</span> &nbsp;BLAST<span id="rng">2.15</span></div>
+<div id="stats">SCOREx<span id="mul">1.0</span>&nbsp;AIM<span id="aim">10</span>&nbsp;BNC<span id="bnc">3</span>&nbsp;BLAST<span id="rng">2.15</span></div>
 <canvas id="c"></canvas>
 <div id="msg"></div>
 <script>
@@ -126,9 +126,9 @@ var ENEMY_SPACING = 44;
 
 // 敵タイプ定義
 var ETYPES = {
-  s: { r:13, hp:1, color:'#4db',  dark:'#1a4a4a', label:'s' },  // 小型スライム
-  m: { r:18, hp:2, color:'#e85',  dark:'#4a2010', label:'m' },  // 中型モンスター
-  l: { r:24, hp:3, color:'#a4c',  dark:'#3a1050', label:'l' },  // 大型ボス
+  s: { r:13, hp:1, atkPow:1, color:'#4db',  dark:'#1a4a4a', label:'s' },  // 小型スライム
+  m: { r:18, hp:2, atkPow:2, color:'#e85',  dark:'#4a2010', label:'m' },  // 中型モンスター
+  l: { r:24, hp:3, atkPow:3, color:'#a4c',  dark:'#3a1050', label:'l' },  // 大型ボス
 };
 
 function rowY(row) { return 30 + row * ROW_H + 20; }
@@ -150,6 +150,7 @@ playerImg.src = 'player.png';
 var selectOptions = null;
 var selectRects = null;
 var prevPhase = null;
+var pendingSelects = 0;
 var shotType = 'fire'; // 'fire' | 'oil'
 
 // ================================================================
@@ -173,7 +174,7 @@ function makeEnemy(x, row, type) {
   var tp = ETYPES[type];
   return {
     x:x, y:rowY(row), row:row,
-    type:type, r:tp.r, maxHp:tp.hp, hp:tp.hp,
+    type:type, r:tp.r, maxHp:tp.hp, hp:tp.hp, atkPow:tp.atkPow,
     explR: tp.r * EXPL_R_MULT,
     st:'n',
     ignT:0, xplT:0, lv:0,
@@ -197,7 +198,7 @@ function init() {
   AIM_STEPS=10; MAX_BOUNCES=3; EXPL_R_MULT=2.15;
   curBounces=MAX_BOUNCES; penaltyNextTurn=false; penaltyActive=false; turnKills=0;
   dropT=0; dropList=[];
-  selectOptions=null; selectRects=null; prevPhase=null;
+  selectOptions=null; selectRects=null; prevPhase=null; pendingSelects=0;
   shotType='fire';
   domChain.textContent='';
   setMsg(''); updateHUD();
@@ -330,7 +331,13 @@ function endTurn() {
     if (score>bestScore) bestScore=score;
     updateHUD(); phase='over'; return;
   }
-  nextWave();
+  if (pendingSelects > 0) {
+    pendingSelects--;
+    openSelectWindow(W/2, H/2);
+    prevPhase = null; // 選択後はnextWaveへ直行
+  } else {
+    nextWave();
+  }
 }
 
 // ================================================================
@@ -367,7 +374,7 @@ window.addEventListener('mouseup', function(ev) {
   var BX = LX, BY = LY - 28;
   var ang = aimAngleFromX(mx);
   var spd = 12;
-  bul={x:BX, y:BY, vx:Math.cos(ang)*spd, vy:-Math.sin(ang)*spd, r:BR, wallHits:0, type:shotType};
+  bul={x:BX, y:BY, vx:Math.cos(ang)*spd, vy:-Math.sin(ang)*spd, r:BR, wallHits:0, type:shotType, atkPow:1};
   phase='bullet'; setMsg('');
   playerAnim.shooting=true; playerAnim.shotT=0;
   mouse.hasStart=false;
@@ -414,7 +421,7 @@ window.addEventListener('touchend', function(ev) {
   var BX = LX, BY = LY - 28;
   var ang = aimAngleFromX(mx);
   var spd = 12;
-  bul={x:BX, y:BY, vx:Math.cos(ang)*spd, vy:-Math.sin(ang)*spd, r:BR, wallHits:0, type:shotType};
+  bul={x:BX, y:BY, vx:Math.cos(ang)*spd, vy:-Math.sin(ang)*spd, r:BR, wallHits:0, type:shotType, atkPow:1};
   phase='bullet'; setMsg('');
   playerAnim.shooting=true; playerAnim.shotT=0;
   mouse.hasStart=false;
@@ -462,7 +469,7 @@ if (usePointer) {
     var BX = LX, BY = LY - 28;
     var ang = aimAngleFromX(mx);
     var spd = 12;
-    bul={x:BX, y:BY, vx:Math.cos(ang)*spd, vy:-Math.sin(ang)*spd, r:BR, wallHits:0, type:shotType};
+    bul={x:BX, y:BY, vx:Math.cos(ang)*spd, vy:-Math.sin(ang)*spd, r:BR, wallHits:0, type:shotType, atkPow:1};
     phase='bullet'; setMsg('');
     playerAnim.shooting=true; playerAnim.shotT=0;
     mouse.hasStart=false;
@@ -504,13 +511,11 @@ function addHitSpark(x,y) {
 function hitEnemy(en) {
   en.blinkT=0.1;
   addHitSpark(en.x, en.y);
-  en.hp--;
+  var dmg = (bul && bul.atkPow) ? bul.atkPow : 1;
+  en.hp = Math.max(0, en.hp - dmg);
   if (en.hp <= 0) {
-    if (en.st==='n') { en.st='i'; en.ignT=0.25; en.hp=0; }
+    if (en.st==='n') { en.st='i'; en.ignT=0.25; }
     else if (en.st==='i') { doExplode(en); }
-  } else {
-    // HPが残っている場合は点火状態にしない（ダメージのみ）
-    if (en.st==='n') en.st='n'; // stay normal, show damage
   }
 }
 
@@ -532,10 +537,13 @@ function doExplode(en) {
     var o=enemies[i];
     if (o===en||o.st==='x'||o.st==='d') continue;
     if (dst(en.x,en.y,o.x,o.y) > effExplR+o.r) continue;
-    if (o.st==='i') { o.ignT=0.03; }
-    else {
-      o.st='i'; o.lv=en.lv+1;
-      o.ignT=0.25*Math.pow(0.9,o.lv);
+    o.hp = Math.max(0, o.hp - en.atkPow);
+    o.blinkT = 0.12;
+    if (o.hp <= 0) {
+      if (o.st==='i') { o.ignT=0.03; }
+      else { o.st='i'; o.lv=en.lv+1; o.ignT=0.25*Math.pow(0.9,o.lv); }
+    } else if (o.st==='i') {
+      o.ignT=0.03; // 既に点火済みなら即爆発
     }
   }
   // アイテムが誘爆範囲内なら取得
@@ -550,7 +558,7 @@ function destroyItem(it) {
   if (it.st!=='n') return;
   it.st='x'; it.xplT=0.5;
   addExplosion(it.x, it.y, 0, 'item');
-  openSelectWindow(it.x, it.y);
+  pendingSelects++;
 }
 
 function anyActive() {
@@ -726,8 +734,15 @@ function handleSelectClick(mx, my) {
     if (mx>=r.x && mx<=r.x+r.w && my>=r.y && my<=r.y+r.h) {
       applyEffect(selectOptions[i], W/2, H/2);
       selectOptions=null; selectRects=null;
-      if (bul) phase='bullet';
-      else phase='chain';
+      if (pendingSelects > 0) {
+        pendingSelects--;
+        openSelectWindow(W/2, H/2);
+        prevPhase = null; // 連続選択でもnextWaveへ直行
+      } else if (prevPhase === null) {
+        nextWave();
+      } else {
+        phase = prevPhase; prevPhase = null;
+      }
       return;
     }
   }
