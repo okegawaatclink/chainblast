@@ -23,7 +23,7 @@ canvas { display:block; cursor:crosshair; border:1px solid #222; touch-action:no
 </head>
 <body>
 <div id="chain"></div>
-<div id="hud">WAVE <span id="wv">01</span>/20&nbsp;SCORE<span id="sc">000000</span>&nbsp;BEST<span id="bst">000000</span></div>
+<div id="hud">WAVE <span id="wv">01</span>&nbsp;SCORE<span id="sc">000000</span>&nbsp;BEST<span id="bst">000000</span></div>
 <div id="stats">SCOREx<span id="mul">1.0</span>&nbsp;AIM<span id="aim">10</span>&nbsp;BNC<span id="bnc">3</span>&nbsp;BLAST<span id="rng">2.15</span></div>
 <canvas id="c"></canvas>
 <div id="msg"></div>
@@ -147,6 +147,12 @@ var waveGoal=0, waveGoalT=0, waveGoalAchieved=false;
 var goalScoreTarget=0, goalChainTarget=0, goalMsgT=0, totalChains=0;
 var lastWaveChains=0;
 var playCount=0, unlockedCount=1, runActive=false;
+var zoomIndex = -1;
+var zoomRects = null;
+var zoomCloseRect = null;
+var chainText = '';
+var chainTextT = 0;
+var igniteMarks = [];
 // プレイヤーキャラアニメ
 var playerAnim = { shotT: 0, shooting: false };
 var playerImg = new Image();
@@ -161,10 +167,10 @@ enemyImgs.l.src = 'asset/enemy/3.png';
 var itemImg = new Image();
 itemImg.src = 'asset/enemy/item.png';
 var CHAR_LIST = [
-  { name:'CHAR 01', selectSrc:'asset/image/1.png', playSrc:'asset/ball/1.png', accent:'#7dd' },
-  { name:'CHAR 02', selectSrc:'asset/image/2.png', playSrc:'asset/ball/2.png', accent:'#f7a' },
-  { name:'CHAR 03', selectSrc:'asset/image/3.png', playSrc:'asset/ball/3.png', accent:'#7f7' },
-  { name:'CHAR 04', selectSrc:'asset/image/4.png', playSrc:'asset/ball/4.png', accent:'#7bf' }
+  { name:'CHAR 01', selectSrc:'asset/image/1.png', playSrc:'asset/ball/1.png', accent:'#7dd', desc:'バランス型 / 安定した連鎖向き' },
+  { name:'CHAR 02', selectSrc:'asset/image/2.png', playSrc:'asset/ball/2.png', accent:'#f7a', desc:'スピード型 / 連続ヒットが得意' },
+  { name:'CHAR 03', selectSrc:'asset/image/3.png', playSrc:'asset/ball/3.png', accent:'#7f7', desc:'パワー型 / 爆発の波及に強い' },
+  { name:'CHAR 04', selectSrc:'asset/image/4.png', playSrc:'asset/ball/4.png', accent:'#7bf', desc:'テクニカル型 / 角度操作向き' }
 ];
 var charSelectImgs = [];
 for (var ci=0; ci<CHAR_LIST.length; ci++) {
@@ -180,14 +186,9 @@ function setPlayerChar(idx) {
 setPlayerChar(0);
 
 function loadProgress() {
-  try {
-    var v = parseInt(localStorage.getItem('cb_plays')||'0',10);
-    if (!isNaN(v)) playCount = Math.max(0, v);
-  } catch (e) {}
+  playCount = 0;
 }
-function saveProgress() {
-  try { localStorage.setItem('cb_plays', String(playCount)); } catch (e) {}
-}
+function saveProgress() {}
 function updateUnlocks() {
   unlockedCount = Math.max(1, Math.min(CHAR_LIST.length, 1 + playCount));
   if (selectedChar >= unlockedCount) setPlayerChar(unlockedCount-1);
@@ -218,11 +219,13 @@ function updateHUD() {
   domRng.textContent   = EXPL_R_MULT.toFixed(2);
 }
 
-function makeEnemy(x, row, type) {
+function makeEnemy(x, row, type, bonusHp) {
   var tp = ETYPES[type];
+  var b = bonusHp || 0;
+  var hp = tp.hp + b;
   return {
     x:x, y:rowY(row), row:row,
-    type:type, r:tp.r, maxHp:tp.hp, hp:tp.hp, atkPow:tp.atkPow,
+    type:type, r:tp.r, maxHp:hp, hp:hp, atkPow:tp.atkPow,
     explR: tp.r * EXPL_R_MULT,
     st:'n',
     ignT:0, xplT:0, lv:0,
@@ -252,6 +255,12 @@ function resetGameState() {
   goalScoreTarget=0; goalChainTarget=0; goalMsgT=0; totalChains=0;
   lastWaveChains=0;
   runActive=false;
+  zoomIndex = -1;
+  zoomRects = null;
+  zoomCloseRect = null;
+  chainText='';
+  chainTextT=0;
+  igniteMarks=[];
   domChain.textContent='';
   setMsg(''); updateHUD();
   resizeCanvasToFit();
@@ -309,6 +318,24 @@ function randomXPositions(n) {
   return xs;
 }
 
+function findSpawnX(row, r, placed) {
+  var margin = ENEMY_MARGIN, tries = 0;
+  var y = rowY(row);
+  while (tries < 3000) {
+    tries++;
+    var x = rnd(margin, W-margin);
+    var ok = true;
+    for (var i=0; i<placed.length; i++) {
+      var p = placed[i];
+      var py = rowY(p.row);
+      var minD = r + p.r + 6;
+      if (dst(x, y, p.x, py) < minD) { ok=false; break; }
+    }
+    if (ok) return x;
+  }
+  return null;
+}
+
 function nextWave() {
   var fullClear = pendingFullClear;
   if (pendingFullClear) {
@@ -346,76 +373,91 @@ function nextWave() {
   }
 
   // 新しい敵を上から（+1でアイテム分のX座標を確保）
+  var placed=[];
   if (fullClear) {
     var perRow = Math.min(n, maxSpawnSlots() - 1);
     var rows = 4;
     for (var r=0; r<rows; r++) {
       if (perRow<=0) break;
-      var extra = (r===0) ? 1 : 0;
-      var xsr = randomXPositions(perRow + extra);
-      if (xsr.length < perRow + extra) perRow = Math.max(0, xsr.length - extra);
       for (var i=0; i<perRow; i++) {
         var tp = pickType(wave);
-        var en = makeEnemy(xsr[i], r, tp);
+        var rr = ETYPES[tp].r;
+        var x = findSpawnX(r, rr, placed);
+        if (x===null) continue;
+        var en = makeEnemy(x, r, tp, 1);
         var sy = rowY(-1 - r) - i*10;
         en.y = sy;
         dl.push({en:en, row1:r, y0:sy, y1:rowY(r)});
         enemies.push(en);
+        placed.push({x:x, row:r, r:rr});
       }
-      if (r===0 && xsr.length > perRow) {
-        var it0 = makeItem(xsr[perRow], 0);
-        it0.y = rowY(-1);
-        dl.push({en:it0, row1:0, y0:it0.y, y1:rowY(0)});
-        items.push(it0);
-      }
+    }
+    // アイテム（1段目）
+    var ix = findSpawnX(0, 13, placed);
+    if (ix!==null) {
+      var it0 = makeItem(ix, 0);
+      it0.y = rowY(-1);
+      dl.push({en:it0, row1:0, y0:it0.y, y1:rowY(0)});
+      items.push(it0);
+      placed.push({x:ix, row:0, r:13});
     }
   } else if (n >= 6) {
     var n0 = Math.ceil(n/2);
     var n1 = n - n0;
-    var xs0 = randomXPositions(n0 + 1);
-    if (xs0.length < n0 + 1) n0 = Math.max(0, xs0.length - 1);
-    var xs1 = randomXPositions(n1);
-    if (xs1.length < n1) n1 = xs1.length;
     for (var i=0; i<n0; i++) {
       var tp0 = pickType(wave);
-      var en0 = makeEnemy(xs0[i], 0, tp0);
+      var r0 = ETYPES[tp0].r;
+      var x0 = findSpawnX(0, r0, placed);
+      if (x0===null) continue;
+      var en0 = makeEnemy(x0, 0, tp0, 0);
       var sy0 = rowY(-1) - i*10;
       en0.y = sy0;
       dl.push({en:en0, row1:0, y0:sy0, y1:rowY(0)});
       enemies.push(en0);
+      placed.push({x:x0, row:0, r:r0});
     }
     for (var j=0; j<n1; j++) {
       var tp1 = pickType(wave);
-      var en1 = makeEnemy(xs1[j], 1, tp1);
+      var r1 = ETYPES[tp1].r;
+      var x1 = findSpawnX(1, r1, placed);
+      if (x1===null) continue;
+      var en1 = makeEnemy(x1, 1, tp1, 0);
       var sy1 = rowY(-2) - j*10;
       en1.y = sy1;
       dl.push({en:en1, row1:1, y0:sy1, y1:rowY(1)});
       enemies.push(en1);
+      placed.push({x:x1, row:1, r:r1});
     }
     // アイテムを1つ追加（1段目）
-    if (xs0.length > 0) {
-      var it0 = makeItem(xs0[n0] || xs0[xs0.length-1], 0);
+    var ix0 = findSpawnX(0, 13, placed);
+    if (ix0!==null) {
+      var it0 = makeItem(ix0, 0);
       it0.y = rowY(-1);
       dl.push({en:it0, row1:0, y0:it0.y, y1:rowY(0)});
       items.push(it0);
+      placed.push({x:ix0, row:0, r:13});
     }
   } else {
-    var xs = randomXPositions(n + 1);
-    if (xs.length < n + 1) n = Math.max(0, xs.length - 1);
     for (var i=0; i<n; i++) {
       var tp  = pickType(wave);
-      var en  = makeEnemy(xs[i], 0, tp);
+      var rr = ETYPES[tp].r;
+      var x  = findSpawnX(0, rr, placed);
+      if (x===null) continue;
+      var en  = makeEnemy(x, 0, tp, 0);
       var sy  = rowY(-1) - i*10;
       en.y    = sy;
       dl.push({en:en, row1:0, y0:sy, y1:rowY(0)});
       enemies.push(en);
+      placed.push({x:x, row:0, r:rr});
     }
     // アイテムを1つ追加
-    if (xs.length > 0) {
-      var it = makeItem(xs[n] || xs[xs.length-1], 0);
+    var ix = findSpawnX(0, 13, placed);
+    if (ix!==null) {
+      var it = makeItem(ix, 0);
       it.y = rowY(-1);
       dl.push({en:it, row1:0, y0:it.y, y1:rowY(0)});
       items.push(it);
+      placed.push({x:ix, row:0, r:13});
     }
   }
 
@@ -660,6 +702,10 @@ function addHitSpark(x,y) {
   }
 }
 
+function addIgniteMark(x,y) {
+  igniteMarks.push({x:x, y:y, t:0.35});
+}
+
 // ================================================================
 //  GAME LOGIC
 // ================================================================
@@ -669,7 +715,7 @@ function hitEnemy(en) {
   var dmg = (bul && bul.atkPow) ? bul.atkPow : 1;
   en.hp = Math.max(0, en.hp - dmg);
   if (en.hp <= 0) {
-    if (en.st==='n') { en.st='i'; en.ignT=0.25; en.bonus = (wave<=2) ? 1 : 0; }
+    if (en.st==='n') { en.st='i'; en.ignT=0.25; en.bonus = (wave<=2) ? 1 : 0; addIgniteMark(en.x,en.y); }
     else if (en.st==='i') { doExplode(en); }
   }
 }
@@ -684,7 +730,7 @@ function applyExplosionEffects(en) {
     o.blinkT = 0.12;
     if (o.hp <= 0) {
       if (o.st==='i') { o.ignT=0.03; }
-      else { o.st='i'; o.lv=en.lv+1; o.ignT=0.25*Math.pow(0.9,o.lv); o.bonus = (wave<=2) ? 1 : 0; }
+      else { o.st='i'; o.lv=en.lv+1; o.ignT=0.25*Math.pow(0.9,o.lv); o.bonus = (wave<=2) ? 1 : 0; addIgniteMark(o.x,o.y); }
     } else if (o.st==='i') {
       o.ignT=0.03; // 既に点火済みなら即爆発
     }
@@ -706,8 +752,8 @@ function doExplode(en) {
   score+=Math.floor(10*Math.pow(chainCnt,1.3)*scoreMul);
   if (score>bestScore) bestScore=score;
   updateHUD();
-  domChain.textContent=chainCnt+' CHAIN';
-  domChain.style.color=chainCnt>=8?'#f00':chainCnt>=5?'#f70':'#fb0';
+  chainText = chainCnt + ' CHAIN';
+  chainTextT = 0.8;
   if (chainCnt>=5) shakeT=0.25;
   addExplosion(en.x,en.y,en.lv,en.type);
   applyExplosionEffects(en);
@@ -764,6 +810,11 @@ function update(dt) {
     floatTexts[i].life -= dt*0.8;
     if (floatTexts[i].life<=0) floatTexts.splice(i,1);
   }
+  for (var i=igniteMarks.length-1; i>=0; i--) {
+    igniteMarks[i].t -= dt;
+    if (igniteMarks[i].t<=0) igniteMarks.splice(i,1);
+  }
+  if (chainTextT>0) chainTextT-=dt;
   if (goalMsgT>0) goalMsgT-=dt;
   if (waveGoalT>0) waveGoalT-=dt;
   if (phase==='title') return;
@@ -874,18 +925,18 @@ function openSelectWindow(x, y) {
 function applyEffect(id, x, y) {
   var txt;
   if (id==='aim') {
-    AIM_STEPS += 10;
-    txt = 'ガイド延長 +10';
+    AIM_STEPS += 5;
+    txt = 'ガイド延長 +5';
   } else if (id==='bounce') {
-    MAX_BOUNCES += 2;
+    MAX_BOUNCES += 1;
     curBounces = MAX_BOUNCES;
-    txt = '反射回数 +2';
+    txt = '反射回数 +1';
   } else if (id==='explr') {
-    EXPL_R_MULT = Math.round((EXPL_R_MULT + 0.2) * 100) / 100;
-    txt = '誘爆範囲 +0.2';
+    EXPL_R_MULT = Math.round((EXPL_R_MULT + 0.1) * 100) / 100;
+    txt = '誘爆範囲 +0.1';
   } else {
-    scoreMul = Math.round((scoreMul + 0.2) * 10) / 10;
-    txt = 'スコア倍率 +0.2';
+    scoreMul = Math.round((scoreMul + 0.1) * 10) / 10;
+    txt = 'スコア倍率 +0.1';
   }
   updateHUD();
   floatTexts.push({x:x, y:y-20, text:txt, life:1});
@@ -921,6 +972,25 @@ function handleSelectClick(mx, my) {
 }
 
 function handleTitleClick(mx, my) {
+  if (zoomIndex >= 0) {
+    if (zoomCloseRect) {
+      var z = zoomCloseRect;
+      if (mx>=z.x && mx<=z.x+z.w && my>=z.y && my<=z.y+z.h) {
+        zoomIndex = -1;
+        return true;
+      }
+    }
+    return true;
+  }
+  if (zoomRects) {
+    for (var i=0; i<zoomRects.length; i++) {
+      var zr = zoomRects[i];
+      if (mx>=zr.x && mx<=zr.x+zr.w && my>=zr.y && my<=zr.y+zr.h) {
+        zoomIndex = zr.idx;
+        return true;
+      }
+    }
+  }
   if (titleRects) {
     for (var i=0; i<titleRects.length; i++) {
       var r = titleRects[i];
@@ -1120,7 +1190,7 @@ function drawEnemyHP(en) {
   var width = (en.maxHp - 1) * gap;
   var startX = -width / 2;
   var y = en.r + dotR - 6;
-  var liveCol = en.type==='l' ? '#d0f' : '#f80';
+  var liveCol = en.type==='s' ? '#9eeb24' : en.type==='m' ? '#f80' : '#d0f';
   for (var h=0; h<en.maxHp; h++) {
     CX.fillStyle = h < en.hp ? liveCol : '#333';
     CX.beginPath(); CX.arc(startX + h*gap, y, dotR, 0, Math.PI*2); CX.fill();
@@ -1281,6 +1351,7 @@ function drawTitle() {
   var startX=W/2 - totalW/2;
   var startY=H/2 - totalH/2 - 10;
   titleRects=[];
+  zoomRects=[];
   for (var i=0; i<CHAR_LIST.length; i++) {
     var row=Math.floor(i/cols);
     var col=i%cols;
@@ -1296,6 +1367,15 @@ function drawTitle() {
     if (img && img.complete && img.naturalWidth) {
       var iw=80, ih=Math.round(iw*1.5);
       CX.drawImage(img, x+cardW/2-iw/2, y+20, iw, ih);
+    }
+    // zoom icon (unlocked only)
+    if (i < unlockedCount) {
+      var zx = x + cardW - 18;
+      var zy = y + 8;
+      zoomRects.push({x:zx-8, y:zy-8, w:16, h:16, idx:i});
+      CX.strokeStyle='rgba(255,255,255,0.6)'; CX.lineWidth=1.5;
+      CX.beginPath(); CX.arc(zx, zy, 5, 0, Math.PI*2); CX.stroke();
+      CX.beginPath(); CX.moveTo(zx+4, zy+4); CX.lineTo(zx+8, zy+8); CX.stroke();
     }
     if (i >= unlockedCount) {
       CX.fillStyle='rgba(10,10,10,0.90)';
@@ -1317,6 +1397,41 @@ function drawTitle() {
   CX.fillText('START', W/2, by+21);
   CX.fillStyle='rgba(255,255,255,0.5)'; CX.font='11px monospace';
   CX.fillText('クリックで選択 / START', W/2, by+52);
+
+  // zoom overlay
+  if (zoomIndex >= 0) {
+    CX.save();
+    CX.fillStyle='rgba(0,0,0,0.82)';
+    CX.fillRect(0,0,W,H);
+    var zxw=200, zxh=300;
+    var zx=W/2-zxw/2, zy=H/2-zxh/2 - 20;
+    var zimg=charSelectImgs[zoomIndex];
+    if (zimg && zimg.complete && zimg.naturalWidth) {
+      CX.drawImage(zimg, zx, zy, zxw, zxh);
+    } else {
+      CX.fillStyle='rgba(255,255,255,0.1)';
+      CX.fillRect(zx, zy, zxw, zxh);
+    }
+    CX.strokeStyle='rgba(255,255,255,0.6)'; CX.lineWidth=2;
+    CX.strokeRect(zx, zy, zxw, zxh);
+    // description
+    var desc = CHAR_LIST[zoomIndex] ? CHAR_LIST[zoomIndex].desc : '';
+    if (desc) {
+      CX.fillStyle='rgba(0,0,0,0.5)';
+      CX.fillRect(zx, zy+zxh+8, zxw, 36);
+      CX.fillStyle='#fff'; CX.font='bold 11px monospace'; CX.textAlign='center';
+      CX.fillText(desc, W/2, zy+zxh+30);
+    }
+    var cbw=120, cbh=28, cbx=W/2-cbw/2, cby=zy+zxh+50;
+    zoomCloseRect = {x:cbx, y:cby, w:cbw, h:cbh};
+    CX.fillStyle='rgba(255,255,255,0.1)'; CX.fillRect(cbx,cby,cbw,cbh);
+    CX.strokeStyle='rgba(255,255,255,0.5)'; CX.strokeRect(cbx,cby,cbw,cbh);
+    CX.fillStyle='#fff'; CX.font='bold 12px monospace'; CX.textAlign='center';
+    CX.fillText('CLOSE', W/2, cby+19);
+    CX.restore();
+  } else {
+    zoomCloseRect = null;
+  }
 }
 
 function draw() {
@@ -1457,6 +1572,7 @@ function draw() {
     CX.strokeStyle='rgba('+aimCol+',0.35)';
     CX.lineWidth=1.5; CX.beginPath();
     CX.moveTo(sx,sy);
+    var endX=sx, endY=sy;
     for (var k=0;k<AIM_STEPS;k++) {
       sx+=svx;sy+=svy;
       if(sx<BR){sx=BR;svx=Math.abs(svx);}
@@ -1464,8 +1580,14 @@ function draw() {
       if(sy<BR){sy=BR;svy=Math.abs(svy);}
       if(sy>H-BR){sy=H-BR;svy=-Math.abs(svy);}
       CX.lineTo(sx,sy);
+      endX=sx; endY=sy;
     }
     CX.stroke();
+    // 終点強調
+    CX.setLineDash([]);
+    CX.shadowColor='rgba('+aimCol+',0.9)'; CX.shadowBlur=10;
+    CX.fillStyle='rgba('+aimCol+',0.95)';
+    CX.beginPath(); CX.arc(endX,endY,5,0,Math.PI*2); CX.fill();
     CX.restore();
   }
 
@@ -1538,6 +1660,40 @@ function draw() {
     CX.globalAlpha=1; CX.restore();
   }
 
+  // 点火マーカー
+  if (igniteMarks.length) {
+    CX.save();
+    for (var i=0;i<igniteMarks.length;i++) {
+      var mk=igniteMarks[i];
+      var p = mk.t / 0.35;
+      CX.globalAlpha = Math.max(0, p);
+      CX.strokeStyle='rgba(255,180,60,0.9)';
+      CX.lineWidth=2;
+      CX.beginPath(); CX.arc(mk.x, mk.y, 10+6*(1-p), 0, Math.PI*2); CX.stroke();
+      CX.fillStyle='rgba(255,200,80,0.9)';
+      CX.font='bold 10px monospace'; CX.textAlign='center';
+      CX.fillText('IGNITE', mk.x, mk.y-12);
+    }
+    CX.restore();
+    CX.globalAlpha=1;
+  }
+
+  // CHAIN中央表示
+  if (chainTextT>0 && chainText) {
+    var ca = Math.min(1, chainTextT/0.8);
+    CX.save();
+    CX.textAlign='center';
+    CX.globalAlpha=ca;
+    CX.shadowColor='#f80'; CX.shadowBlur=18;
+    CX.fillStyle=chainCnt>=8?'#f33':chainCnt>=5?'#f70':'#fb0';
+    CX.font='bold 28px monospace';
+    CX.fillText(chainText, W/2, H/2-30);
+    CX.shadowBlur=0;
+    CX.fillStyle='rgba(0,0,0,0.5)';
+    CX.fillText(chainText, W/2+1, H/2-29);
+    CX.restore();
+  }
+
   // GAME OVER
   if (phase==='over') {
     CX.fillStyle='rgba(0,0,0,0.78)'; CX.fillRect(0,0,W,H);
@@ -1592,10 +1748,10 @@ function draw() {
 
     for (var i=0;i<2;i++) {
       var id=selectOptions[i];
-      var title = id==='aim'?'AIM GUIDE +10'
-                : id==='bounce'?'BOUNCE +2'
-                : id==='explr'?'BLAST RANGE +0.2'
-                : 'SCORE MULT +0.2';
+      var title = id==='aim'?'AIM GUIDE +5'
+                : id==='bounce'?'BOUNCE +1'
+                : id==='explr'?'BLAST RANGE +0.1'
+                : 'SCORE MULT +0.1';
       var sub = id==='aim'?'ガイドライン延長'
               : id==='bounce'?'反射回数増加'
               : id==='explr'?'誘爆範囲拡大'
