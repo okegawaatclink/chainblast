@@ -153,6 +153,33 @@ var zoomCloseRect = null;
 var chainText = '';
 var chainTextT = 0;
 var igniteMarks = [];
+var sndBomb = new Audio('asset/se/bomb.wav');
+sndBomb.volume = 0.5;
+function playBomb() {
+  try {
+    var a = sndBomb.cloneNode();
+    a.volume = sndBomb.volume;
+    a.play();
+  } catch (e) {}
+}
+var sndShoot = new Audio('asset/se/shoot.wav');
+sndShoot.volume = 0.45;
+function playShoot() {
+  try {
+    var a = sndShoot.cloneNode();
+    a.volume = sndShoot.volume;
+    a.play();
+  } catch (e) {}
+}
+var sndBound = new Audio('asset/se/bound.wav');
+sndBound.volume = 0.35;
+function playBound() {
+  try {
+    var a = sndBound.cloneNode();
+    a.volume = sndBound.volume;
+    a.play();
+  } catch (e) {}
+}
 // プレイヤーキャラアニメ
 var playerAnim = { shotT: 0, shooting: false };
 var playerImg = new Image();
@@ -566,6 +593,7 @@ window.addEventListener('mouseup', function(ev) {
   bul={x:BX, y:BY, vx:Math.cos(ang)*spd, vy:-Math.sin(ang)*spd, r:BR, wallHits:0, type:shotType, atkPow:1};
   phase='bullet'; setMsg('');
   playerAnim.shooting=true; playerAnim.shotT=0;
+  playShoot();
   mouse.hasStart=false;
 });
 
@@ -617,6 +645,7 @@ window.addEventListener('touchend', function(ev) {
   bul={x:BX, y:BY, vx:Math.cos(ang)*spd, vy:-Math.sin(ang)*spd, r:BR, wallHits:0, type:shotType, atkPow:1};
   phase='bullet'; setMsg('');
   playerAnim.shooting=true; playerAnim.shotT=0;
+  playShoot();
   mouse.hasStart=false;
 }, { passive:false });
 window.addEventListener('touchcancel', function(ev) {
@@ -669,6 +698,7 @@ if (usePointer) {
     bul={x:BX, y:BY, vx:Math.cos(ang)*spd, vy:-Math.sin(ang)*spd, r:BR, wallHits:0, type:shotType, atkPow:1};
     phase='bullet'; setMsg('');
     playerAnim.shooting=true; playerAnim.shotT=0;
+    playShoot();
     mouse.hasStart=false;
   });
   window.addEventListener('pointercancel', function(ev) {
@@ -755,6 +785,7 @@ function doExplode(en) {
   chainText = chainCnt + ' CHAIN';
   chainTextT = 0.8;
   if (chainCnt>=5) shakeT=0.25;
+  playBomb();
   addExplosion(en.x,en.y,en.lv,en.type);
   applyExplosionEffects(en);
   if (en.bonus>0 && wave<=2) {
@@ -848,10 +879,10 @@ function update(dt) {
   // BULLET
   if (phase==='bullet' && bul) {
     bul.x+=bul.vx; bul.y+=bul.vy;
-    if (bul.x-bul.r<0)  {bul.x=bul.r;     bul.vx= Math.abs(bul.vx); bul.wallHits++;}
-    if (bul.x+bul.r>W)  {bul.x=W-bul.r;   bul.vx=-Math.abs(bul.vx); bul.wallHits++;}
-    if (bul.y-bul.r<0)  {bul.y=bul.r;     bul.vy= Math.abs(bul.vy); bul.wallHits++;}
-    if (bul.y+bul.r>H)  {bul.y=H-bul.r;   bul.vy=-Math.abs(bul.vy); bul.wallHits++;}
+    if (bul.x-bul.r<0)  {bul.x=bul.r;     bul.vx= Math.abs(bul.vx); bul.wallHits++; playBound();}
+    if (bul.x+bul.r>W)  {bul.x=W-bul.r;   bul.vx=-Math.abs(bul.vx); bul.wallHits++; playBound();}
+    if (bul.y-bul.r<0)  {bul.y=bul.r;     bul.vy= Math.abs(bul.vy); bul.wallHits++; playBound();}
+    if (bul.y+bul.r>H)  {bul.y=H-bul.r;   bul.vy=-Math.abs(bul.vy); bul.wallHits++; playBound();}
     if (bul.wallHits>=curBounces) { bul=null; }
     else {
       for (var i=0; i<enemies.length; i++) {
